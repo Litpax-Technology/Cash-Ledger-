@@ -6,7 +6,8 @@
   <meta name="theme-color" content="#1e1b4b" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <link rel="manifest" href="manifest.json" />
-  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="icon" href="assets/favicon.png" type="image/png" />
+  <link rel="apple-touch-icon" href="assets/favicon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <title>Cash Ledger · Litpax</title>
@@ -19,7 +20,7 @@
       <div class="aurora" aria-hidden="true"><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
 
       <div class="lg-top">
-        <div class="lg-brand"><span class="logo sm">₹</span>Litpax <b>Cash Ledger</b></div>
+        <div class="lg-brand"><img src="assets/litpax-logo-light.png" alt="Litpax" class="brand-logo" /><span class="brand-sep"></span><span class="brand-app">Cash Ledger</span></div>
         <span class="lg-pill"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/></svg>Secure · Role based</span>
       </div>
 
@@ -70,6 +71,7 @@
 
     <section class="lg-side">
       <div class="lg-box fade-in" id="lgBox">
+        <img src="assets/litpax-logo-dark.png" alt="Litpax" class="card-logo" />
         <div class="lg-head">
           <div class="logo">₹</div>
           <div><div class="lg-hello" id="lgHello">Welcome back</div><div class="lg-sub">Sign in with your PIN</div></div>
@@ -93,7 +95,7 @@
   <!-- App -->
   <div id="appView" class="app hidden">
     <aside class="sidebar">
-      <div class="brand-side"><span class="logo sm">₹</span> Cash Ledger</div>
+      <div class="brand-side"><img src="assets/litpax-logo-light.png" alt="Litpax" class="side-logo" /><span class="side-app">Cash Ledger</span></div>
       <nav id="nav" class="nav"></nav>
       <div class="side-foot">
         <div id="who" class="who"></div>
@@ -107,6 +109,8 @@
       </header>
       <section id="page" class="page"></section>
     </main>
+    <nav id="bnav" class="bnav" aria-label="Main"></nav>
+    <button class="fab hidden" id="fab" aria-label="Add">+</button>
   </div>
 
   <!-- Modal (forms, details) -->
