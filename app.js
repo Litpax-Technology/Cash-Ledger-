@@ -65,6 +65,27 @@ async function call(action, params = {}, quiet = false) {
   }
 }
 
+/* ---- Instant pages: show the last data at once, refresh in background ---- */
+const MEMO = new Map(), FRESH_MS = 20000;        // data younger than 20 s is not fetched again
+const keyOf = (a, p) => a + '|' + Object.keys(p || {}).sort().map(k => k + '=' + p[k]).join('&');
+function memoSet(a, p, r) { MEMO.set(keyOf(a, p), { s: JSON.stringify(r), t: Date.now() }); }
+function markStale() { MEMO.forEach(v => { v.t = 0; }); }   // after any save, next view refetches
+async function load(action, params, render, host) {
+  const key = keyOf(action, params), hit = MEMO.get(key);
+  const tok = host ? (host._tok = (host._tok || 0) + 1) : 0;
+  if (hit) {
+    render(JSON.parse(hit.s), true);
+    if (Date.now() - hit.t < FRESH_MS) return;
+  }
+  const r = await call(action, params, !!hit);
+  if (host && (host._tok !== tok || !document.body.contains(host))) return;   // user moved on
+  if (r && r.ok) {
+    const fresh = JSON.stringify(r);
+    MEMO.set(key, { s: fresh, t: Date.now() });
+    if (!hit || fresh !== hit.s) render(r, false);
+  } else if (!hit) render(r, false);
+}
+
 /* submit with double-submit guard; keeps form data on failure */
 async function submit(form, action, params) {
   if (form.dataset.busy === '1') return null;
@@ -74,6 +95,7 @@ async function submit(form, action, params) {
   btns.forEach(b => { b.disabled = true; b.innerHTML = '<span class="spinner"></span>Saving…'; });
   try {
     const r = await call(action, params);
+    if (r && r.ok) markStale();
     return r && r.ok ? r : null;
   } finally {
     form.dataset.busy = '0';
@@ -88,7 +110,7 @@ async function act(btn, action, params, okMsg) {
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>' + label;
   const r = await call(action, params);
   btn.disabled = false; btn.innerHTML = label;
-  if (r && r.ok) { if (okMsg) toast(okMsg); return r; }
+  if (r && r.ok) { markStale(); if (okMsg) toast(okMsg); return r; }
   return null;
 }
 
@@ -171,7 +193,8 @@ function formData(form) {
   return o;
 }
 function trackDraft(form, key, ref) {
-  form.addEventListener('input', () => store.set('draft_' + key, Object.assign(formData(form), { ClientRef: ref })));
+  form.addEventListener('input', () => store.set('draft_' + key,
+    Object.assign(formData(form), { ClientRef: typeof ref === 'function' ? ref() : ref })));
 }
 const getDraft = key => store.get('draft_' + key) || {};
 const clearDraft = key => store.del('draft_' + key);
@@ -251,7 +274,7 @@ async function doLogin() {
     S.token = r.token; S.me = { name: r.name, role: r.role };
     store.set('session', { token: S.token, me: S.me });
     $('#pin').value = '';
-    await startApp();
+    await startApp(r.startup);
   } catch (e) {
     err.textContent = 'Could not connect. Check internet and try again.';
   } finally { btn.disabled = false; btn.innerHTML = label; }
@@ -263,20 +286,35 @@ function shakeLogin() {
   $('#pin').select();
 }
 
-async function startApp() {
-  const r = await call('bootstrap', {}, true);
-  if (!r || !r.ok) {
-    if (r === null && S.token) $('#loginErr').textContent = 'Could not connect. Check internet and try again.';
-    else if (r && r.message) $('#loginErr').textContent = r.message;
-    showLogin(); return;
+async function startApp(pre) {
+  let r = pre;
+  if (!r) {
+    r = await call('bootstrap', {}, true);
+    if (!r || !r.ok) {
+      if (r === null && S.token) $('#loginErr').textContent = 'Could not connect. Check internet and try again.';
+      else if (r && r.message) $('#loginErr').textContent = r.message;
+      showLogin(); return;
+    }
   }
+  store.set('boot', r);
+  applyStartup(r);
+  enterApp();
+}
+
+/* config + first screen data arrive together; seed the page cache with them */
+function applyStartup(r) {
   S.me = r.me; S.cfg = r.config; S.settings = r.settings; S.persons = r.persons; S.employees = r.employees;
+  if (r.dash) { memoSet('dashboard', {}, r.dash); setBadge(r.dash.kpi.pending); }
+  if (r.mine) memoSet('listVouchers', { page: 1, status: '', mine: '1' }, r.mine);
+}
+
+function enterApp() {
   $('#loginView').classList.add('hidden');
   $('#appView').classList.remove('hidden');
   $('#who').innerHTML = `${esc(S.me.name)}<small>${esc(S.me.role)}</small>`;
   buildNav();
+  if (S.badge !== undefined) setBadge(S.badge);
   go(isMgr() ? 'dashboard' : 'mycash');
-  refreshBadge();
 }
 
 function showLogin() {
@@ -286,8 +324,9 @@ function showLogin() {
 }
 
 function logout() {
-  S.token = null; S.me = null; S.f = {};
-  store.del('session');
+  S.token = null; S.me = null; S.f = {}; S.badge = undefined;
+  MEMO.clear();
+  store.del('session'); store.del('boot');
   closeModal(); closeDialog();
   showLogin();
 }
@@ -317,27 +356,33 @@ function go(id, params = {}) {
   S.view = item.id; S.params = params;
   $$('.nav-item').forEach(a => a.classList.toggle('active', a.dataset.id === item.id));
   $('#pageTitle').textContent = item.label;
-  const page = $('#page');
+  const page = $('#page'), host = document.createElement('div');
+  page.replaceChildren(host);
   page.classList.remove('fade-in'); void page.offsetWidth; page.classList.add('fade-in');
   window.scrollTo(0, 0);
-  item.render(page, params);
+  item.render(host, params);
 }
 function refreshView() { if (S.view) go(S.view, S.params); }
 
+function setBadge(n) {
+  S.badge = n;
+  const el = $('#apprCount');
+  if (!el) return;
+  el.textContent = n;
+  el.classList.toggle('hidden', !n);
+}
 async function refreshBadge() {
   if (!isMgr()) return;
   const r = await call('approvals', {}, true);
-  const el = $('#apprCount');
-  if (!el || !r || !r.ok) return;
-  el.textContent = r.count;
-  el.classList.toggle('hidden', !r.count);
+  if (r && r.ok) setBadge(r.count);
 }
 
 /* =========================== Dashboard =========================== */
 async function viewDashboard(el) {
   el.innerHTML = `<div class="kpis">${skel(1).repeat(4)}</div>${skel(6)}`;
-  const r = await call('dashboard');
+  load('dashboard', r => {
   if (!r || !r.ok) { el.innerHTML = errBox(); return bindRetry(el); }
+  setBadge(r.kpi.pending);
   const k = r.kpi;
   const maxP = Math.max(1, ...r.byPurpose.map(p => p.amount));
   el.innerHTML = `
@@ -377,13 +422,15 @@ async function viewDashboard(el) {
   $$('[data-go]', el).forEach(c => c.onclick = () => go(c.dataset.go, c.dataset.go === 'vouchers' ? { overdue: true } : {}));
   $$('[data-person]', el).forEach(tr => tr.onclick = () => go('ledger', { person: tr.dataset.person }));
   $$('[data-v]', el).forEach(tr => tr.onclick = () => openVoucher(tr.dataset.v));
+  }, el);
 }
 
 /* =========================== Approvals =========================== */
 async function viewApprovals(el) {
   el.innerHTML = skel(5);
-  const r = await call('approvals');
+  load('approvals', r => {
   if (!r || !r.ok) { el.innerHTML = errBox(); return bindRetry(el); }
+  setBadge(r.count);
   const canAct = isOwner();
   const btns = (type, id) => canAct ? `<button class="btn btn-ok btn-sm" data-ok="${type}|${esc(id)}">Confirm</button>
     <button class="btn btn-danger btn-sm" data-rej="${type}|${esc(id)}">Reject</button>` : '<span class="muted sm">Owner confirms</span>';
@@ -413,6 +460,7 @@ async function viewApprovals(el) {
     const r2 = await act(b, type === 'V' ? 'confirmVoucher' : 'confirmReturn', { id, decision: 'reject', reason }, 'Rejected');
     if (r2) { refreshView(); refreshBadge(); }
   });
+  }, el);
 }
 
 /* =========================== My Cash =========================== */
@@ -421,15 +469,18 @@ async function viewMyCash(el) {
   const statuses = ['', 'Pending Confirm', 'Open', 'Closed', 'Rejected'];
   el.innerHTML = `<div class="toolbar">
       <div class="chips">${statuses.map(s => `<button class="chip ${f.status === s ? 'on' : ''}" data-status="${s}">${s || 'All'}</button>`).join('')}</div>
-      <span class="spacer"></span><button class="btn btn-primary btn-auto" id="newCash">+ Cash Received</button>
+      <span class="spacer"></span><button class="btn btn-ghost" id="quickExp">+ Expense</button>
+      <button class="btn btn-primary btn-auto" id="newCash">+ Cash Received</button>
     </div><div id="mcBody">${skel(4)}</div>`;
   $$('[data-status]', el).forEach(c => c.onclick = () => { f.status = c.dataset.status; f.page = 1; viewMyCash(el); });
   $('#newCash', el).onclick = formVoucher;
+  $('#quickExp', el).onclick = () => quickExpense(S.openList);
 
-  const r = await call('listVouchers', { page: f.page, status: f.status, mine: '1' });
+  load('listVouchers', { page: f.page, status: f.status, mine: '1' }, r => {
   const body = $('#mcBody', el);
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
   const s = r.summary;
+  S.openList = r.openList || [];
   body.innerHTML = `<div class="kpis">
       ${kpi('Cash in hand', inr(s.cashInHand), 'Received but not yet accounted', { hl: true })}
       ${kpi('Open entries', s.open, s.overdue ? s.overdue + ' overdue' : 'Add expenses or return cash')}
@@ -439,7 +490,13 @@ async function viewMyCash(el) {
     <div class="vlist">${r.rows.map(vCard).join('') || emptyBox('No entries yet. Tap "Cash Received" when the Owner gives you cash.')}</div>
     ${pager(r)}`;
   $$('[data-v]', body).forEach(c => c.onclick = () => openVoucher(c.dataset.v));
+  $$('[data-add]', body).forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const v = r.rows.find(x => x.VoucherID === b.dataset.add);
+    formExpense(v, v.Purpose === S.settings.advancePurpose);
+  });
   bindPager(body, p => { f.page = p; viewMyCash(el); });
+  }, $('#mcBody', el));
 }
 
 function vCard(v) {
@@ -452,7 +509,21 @@ function vCard(v) {
       <div><span>Returned</span><b>${inr(v.Returned)}</b></div><div><span>Balance</span><b class="${num(v.Balance) < 0 ? 'neg' : ''}">${inr(v.Balance)}</b></div></div>
     <div class="progress"><span style="width:${used.toFixed(1)}%"></span></div>
     ${v.Status === 'Rejected' && v.RejectReason ? `<div class="note bad" style="margin:10px 0 0">Rejected: ${esc(v.RejectReason)}</div>` : ''}
+    ${v.Status === 'Open' && v.Person === S.me.name ? `<div class="vc-foot"><button class="btn btn-ghost btn-sm" data-add="${esc(v.VoucherID)}">+ Expense</button></div>` : ''}
   </div>`;
+}
+
+/* "+ Expense" from the toolbar: pick the open entry (or go straight in if there is one) */
+function quickExpense(list) {
+  if (!list || !list.length) return toast('No open entry yet. Add "Cash Received" and wait for Owner confirmation.', false);
+  const go1 = v => formExpense(v, v.Purpose === S.settings.advancePurpose);
+  if (list.length === 1) return go1(list[0]);
+  const box = openModal(`<div class="m-head"><div><div class="m-title">Add expense to</div>
+      <div class="muted sm">Choose the cash entry this expense was paid from</div></div><button class="x" data-close>&times;</button></div>
+    <div class="pick-list">${list.map(v => `<button class="pick" data-v="${esc(v.VoucherID)}">
+      <span><b>${esc(v.Purpose)}</b><small>${esc(v.VoucherID)} · ${esc(v.Date)}</small></span>
+      <span class="right"><small>Balance</small><b>${inr(v.Balance)}</b></span></button>`).join('')}</div>`);
+  $$('[data-v]', box).forEach(b => b.onclick = () => go1(list.find(x => x.VoucherID === b.dataset.v)));
 }
 
 /* =========================== All cash entries (Owner/Admin) =========================== */
@@ -481,7 +552,7 @@ async function viewVouchers(el, params = {}) {
       ['Remarks', 'Remarks'], ['ConfirmedBy', 'Confirmed By'], ['ClosedBy', 'Closed By'], ['CloseNote', 'Close Note']], r.rows);
   };
 
-  const r = await call('listVouchers', Object.assign(params2(), { page: f.page }));
+  load('listVouchers', Object.assign(params2(), { page: f.page }), r => {
   const body = $('#vBody', el);
   if (!body) return;
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
@@ -494,13 +565,18 @@ async function viewVouchers(el, params = {}) {
       '<tr><td colspan="9">' + emptyBox('No entries found') + '</td></tr>'}</tbody></table></div></div>${pager(r)}`;
   $$('[data-v]', body).forEach(tr => tr.onclick = () => openVoucher(tr.dataset.v));
   bindPager(body, p => { f.page = p; viewVouchers(el); });
+  }, $('#vBody', el));
 }
 
 /* =========================== Voucher detail =========================== */
-async function openVoucher(id) {
+async function openVoucher(id, pre) {
   const box = openModal(`<div class="m-head"><div><div class="m-title">Loading…</div></div><button class="x" data-close>&times;</button></div>${skel(4)}`, true);
-  const r = await call('voucherDetail', { id });
-  if (!$('#modalBox').contains(box) || $('#modal').classList.contains('hidden')) return;
+  if (pre) { memoSet('voucherDetail', { id }, pre); box._tok = (box._tok || 0) + 1; return renderVoucher(box, pre, id); }
+  load('voucherDetail', { id }, r => renderVoucher(box, r, id), box);
+}
+
+function renderVoucher(box, r, id) {
+  if ($('#modal').classList.contains('hidden')) return;
   if (!r || !r.ok) {
     box.innerHTML = `<div class="m-head"><div><div class="m-title">${esc(id)}</div></div><button class="x" data-close>&times;</button></div>${errBox()}`;
     const b = $('[data-retry]', box); if (b) b.onclick = () => openVoucher(id);
@@ -551,14 +627,14 @@ async function openVoucher(id) {
 
     ${actions.length ? `<div class="m-actions" style="margin-top:20px">${actions.join('')}</div>` : ''}`;
 
-  const done = async (msg) => { if (msg) toast(msg); refreshView(); refreshBadge(); openVoucher(id); };
+  const done = (msg, res) => { if (msg) toast(msg); refreshView(); refreshBadge(); openVoucher(id, res && res.detail); };
   const A = a => $(`[data-a="${a}"]`, box);
 
-  if (A('confirm')) A('confirm').onclick = async e => { if (await act(e.currentTarget, 'confirmVoucher', { id, decision: 'confirm' })) done('Cash entry confirmed'); };
+  if (A('confirm')) A('confirm').onclick = async e => { { const x = await act(e.currentTarget, 'confirmVoucher', { id, decision: 'confirm' }); if (x) done('Cash entry confirmed', x); } };
   if (A('reject')) A('reject').onclick = async e => {
     const btn = e.currentTarget;
     const reason = await askText('Reject cash entry', 'Reason', true, 'Reject');
-    if (reason !== null && await act(btn, 'confirmVoucher', { id, decision: 'reject', reason })) done('Entry rejected');
+    if (reason !== null) { const x = await act(btn, 'confirmVoucher', { id, decision: 'reject', reason }); if (x) done('Entry rejected', x); }
   };
   if (A('close')) A('close').onclick = async e => {
     const btn = e.currentTarget;
@@ -570,7 +646,7 @@ async function openVoucher(id) {
     let note = '';
     if (bal === 0) { if (!(await confirmBox('Settle & Close', msg, 'Close'))) return; }
     else { note = await askText('Settle & Close', 'Note (' + msg + ')', true, 'Close entry'); if (note === null) return; }
-    if (await act(btn, 'closeVoucher', { id, note })) done('Entry closed');
+    { const x = await act(btn, 'closeVoucher', { id, note }); if (x) done('Entry closed', x); }
   };
   if (A('cancel')) A('cancel').onclick = async e => {
     const btn = e.currentTarget;
@@ -581,14 +657,14 @@ async function openVoucher(id) {
   if (A('return')) A('return').onclick = () => formReturn(v, sum(pendRet, 'Amount'));
   $$('[data-del]', box).forEach(b => b.onclick = async () => {
     if (!(await confirmBox('Remove expense', 'This expense will be removed from the entry.', 'Remove', true))) return;
-    if (await act(b, 'deleteExpense', { id: b.dataset.del })) done('Expense removed');
+    { const x = await act(b, 'deleteExpense', { id: b.dataset.del }); if (x) done('Expense removed', x); }
   });
   $$('[data-rok]', box).forEach(b => b.onclick = async () => {
-    if (await act(b, 'confirmReturn', { id: b.dataset.rok, decision: 'confirm' })) done('Return confirmed');
+    { const x = await act(b, 'confirmReturn', { id: b.dataset.rok, decision: 'confirm' }); if (x) done('Return confirmed', x); }
   });
   $$('[data-rrej]', box).forEach(b => b.onclick = async () => {
     const reason = await askText('Reject cash return', 'Reason', true, 'Reject');
-    if (reason !== null && await act(b, 'confirmReturn', { id: b.dataset.rrej, decision: 'reject', reason })) done('Return rejected');
+    if (reason !== null) { const x = await act(b, 'confirmReturn', { id: b.dataset.rrej, decision: 'reject', reason }); if (x) done('Return rejected', x); }
   });
 }
 
@@ -621,31 +697,50 @@ function formVoucher() {
 }
 
 function formExpense(v, isAdvance) {
-  const key = 'exp_' + v.VoucherID, d = getDraft(key), ref = d.ClientRef || uid();
-  const bal = num(v.Balance);
-  let uploaded = null; // { file, url } so a retry does not upload twice
+  const key = 'exp_' + v.VoucherID, d = getDraft(key);
+  let ref = d.ClientRef || uid(), bal = num(v.Balance), up = null, more = false;
   const empOpts = S.employees.map(e => `<option value="${esc(e.id)}" ${e.id === d.EmpID ? 'selected' : ''}>${esc(e.name)}${e.dept ? ' — ' + esc(e.dept) : ''}</option>`).join('');
   const box = openModal(`
     <div class="m-head"><div><div class="m-title">${isAdvance ? 'Advance Given to Employee' : 'Add Expense'}</div>
-      <div class="muted sm">${esc(v.VoucherID)} · ${esc(v.Purpose)} · Balance ${inr(bal)}</div></div><button class="x" data-close>&times;</button></div>
+      <div class="muted sm">${esc(v.VoucherID)} · ${esc(v.Purpose)} · Balance <b id="expBal">${inr(bal)}</b></div></div><button class="x" data-close>&times;</button></div>
     <form class="form" novalidate>
       <label>Date<input class="input" type="date" name="Date" max="${today()}" value="${esc(d.Date || today())}" /></label>
       <label>Amount (₹)<input class="input" type="number" name="Amount" inputmode="decimal" min="1" step="0.01" value="${esc(d.Amount || '')}" placeholder="0" /></label>
       ${isAdvance
         ? `<label class="full">Employee<select class="input" name="EmpID"><option value="">Select employee</option>${empOpts}</select>
-            ${S.employees.length ? '' : '<span class="hint">No employees yet — add them from the Employees page.</span>'}</label>`
+            ${S.employees.length ? '' : '<span class="hint">No employees found in the Employee Master.</span>'}</label>`
         : `<label class="full">Paid to<input class="input" name="PaidTo" maxlength="120" value="${esc(d.PaidTo || '')}" placeholder="Vendor / shop / person" /></label>`}
       <label class="full">Description<textarea class="input" name="Description" rows="2" maxlength="300" placeholder="${isAdvance ? 'Reason for advance (optional)' : 'What was bought / paid for'}">${esc(d.Description || '')}</textarea></label>
       <label class="full file-pick" id="pick"><input type="file" accept="image/*,application/pdf" /><span id="pickTxt">Attach bill photo (optional)</span></label>
-      <div class="m-actions full"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn btn-primary btn-auto">Save Expense</button></div>
+      <div class="m-actions full"><button type="button" class="btn btn-ghost" data-close>Close</button>
+        <button type="submit" class="btn btn-ghost" data-more>Save &amp; add another</button>
+        <button type="submit" class="btn btn-primary btn-auto">Save</button></div>
     </form>`);
-  const form = $('form', box), fileIn = $('input[type=file]', box);
-  trackDraft(form, key, ref);
-  fileIn.onchange = () => {
-    const f = fileIn.files[0];
-    $('#pick', box).classList.toggle('has', !!f);
-    $('#pickTxt', box).textContent = f ? f.name + ' (tap to change)' : 'Attach bill photo (optional)';
+  const form = $('form', box), fileIn = $('input[type=file]', box), pick = $('#pick', box), pickTxt = $('#pickTxt', box);
+  trackDraft(form, key, () => ref);
+  $('[data-more]', form).addEventListener('click', () => { more = true; });
+  $('button.btn-primary', form).addEventListener('click', () => { more = false; });
+
+  const resetPick = () => { up = null; fileIn.value = ''; pick.classList.remove('has'); pickTxt.textContent = 'Attach bill photo (optional)'; };
+  // upload starts the moment a photo is chosen, while the user is still typing
+  const startUpload = file => {
+    const job = { file, url: null, err: null };
+    pick.classList.add('has');
+    pickTxt.innerHTML = '<span class="spinner dark"></span>Uploading ' + esc(file.name) + '…';
+    job.promise = uploadBill(file).then(url => {
+      job.url = url;
+      if (up === job) pickTxt.textContent = '✓ Bill uploaded — ' + file.name;
+      return url;
+    }).catch(er => {
+      job.err = er;
+      if (up === job) { pick.classList.remove('has'); pickTxt.textContent = 'Upload failed — tap to choose again'; }
+      throw er;
+    });
+    job.promise.catch(() => {});
+    up = job;
   };
+  fileIn.onchange = () => { const f = fileIn.files[0]; if (f) startUpload(f); else resetPick(); };
+
   form.onsubmit = async e => {
     e.preventDefault();
     if (form.dataset.busy === '1') return;
@@ -656,21 +751,30 @@ function formExpense(v, isAdvance) {
       const ok = await confirmBox('More than balance', `This is ${inr(num(rec.Amount) - bal)} more than your balance. The extra will show as payable by the Owner. Continue?`, 'Continue');
       if (!ok) return;
     }
-    const file = fileIn.files[0];
-    if (file) {
-      if (uploaded && uploaded.file === file) rec.BillURL = uploaded.url;
-      else {
-        const btn = $('button[type=submit]', form);
-        btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Uploading bill…';
-        try { rec.BillURL = await uploadBill(file); uploaded = { file, url: rec.BillURL }; }
-        catch (er) { toast('Bill upload failed: ' + er.message + '. Remove the photo or try again.', false); return; }
-        finally { btn.disabled = false; btn.innerHTML = 'Save Expense'; }
-      }
+    if (up) {
+      if (up.err) startUpload(up.file);
+      if (!up.url) {
+        const btns = $$('button[type=submit]', form);
+        btns.forEach(b => { b.disabled = true; });
+        try { rec.BillURL = await up.promise; }
+        catch (er) { toast('Bill upload failed: ' + er.message + '. Choose the photo again or remove it.', false); return; }
+        finally { btns.forEach(b => { b.disabled = false; }); }
+      } else rec.BillURL = up.url;
     }
     const r = await submit(form, 'addExpense', { record: JSON.stringify(rec) });
     if (!r) return;
-    clearDraft(key); toast(isAdvance ? 'Advance recorded' : 'Expense saved');
-    refreshView(); openVoucher(v.VoucherID);
+    clearDraft(key);
+    toast(isAdvance ? 'Advance recorded' : 'Expense saved');
+    refreshView();
+    if (r.detail) memoSet('voucherDetail', { id: v.VoucherID }, r.detail);
+    if (!more) return openVoucher(v.VoucherID, r.detail);
+    // keep the form open for the next expense
+    bal = num(r.balance != null ? r.balance : bal - num(rec.Amount));
+    $('#expBal', box).textContent = inr(bal);
+    ref = uid();
+    ['Amount', 'PaidTo', 'Description', 'EmpID'].forEach(n => { const f = $(`[name=${n}]`, form); if (f) f.value = ''; });
+    resetPick();
+    $('[name=Amount]', form).focus();
   };
 }
 
@@ -698,7 +802,7 @@ function formReturn(v, pendingAmt) {
     if (err) return toast(err, false);
     const r = await submit(form, 'addReturn', { record: JSON.stringify(rec) });
     if (!r) return;
-    clearDraft(key); toast('Return sent to Owner for confirmation'); refreshView(); refreshBadge(); openVoucher(v.VoucherID);
+    clearDraft(key); toast('Return sent to Owner for confirmation'); refreshView(); refreshBadge(); openVoucher(v.VoucherID, r.detail);
   };
 }
 
@@ -728,7 +832,7 @@ async function viewExpenses(el) {
       ['PaidTo', 'Paid To'], ['Description', 'Description'], ['Amount', 'Amount'], ['BillURL', 'Bill'], ['EmpName', 'Employee (advance)']], r.rows);
   };
 
-  const r = await call('listExpenses', Object.assign(p(), { page: f.page }));
+  load('listExpenses', Object.assign(p(), { page: f.page }), r => {
   const body = $('#eBody', el);
   if (!body) return;
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
@@ -742,6 +846,7 @@ async function viewExpenses(el) {
     </table></div></div>${pager(r)}`;
   $$('[data-v]', body).forEach(a => a.onclick = e => { e.preventDefault(); openVoucher(a.dataset.v); });
   bindPager(body, pg => { f.page = pg; viewExpenses(el); });
+  }, $('#eBody', el));
 }
 
 /* =========================== Ledger =========================== */
@@ -762,7 +867,7 @@ async function viewLedger(el, params = {}) {
   $('#prn', el).onclick = () => window.print();
   if (!f.person) return;
 
-  const r = await call('ledger', { person: f.person, from: f.from, to: f.to });
+  load('ledger', { person: f.person, from: f.from, to: f.to }, r => {
   const body = $('#lBody', el);
   if (!body) return;
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
@@ -784,13 +889,14 @@ async function viewLedger(el, params = {}) {
         '<tr><td colspan="6">' + emptyBox('No transactions in this period') + '</td></tr>'}</tbody>
       <tfoot><tr><td colspan="3">Closing</td><td class="right">${inr(r.totalIn)}</td><td class="right">${inr(r.totalOut)}</td><td class="right">${inr(r.closing)}</td></tr></tfoot>
     </table></div></div>`;
+  }, $('#lBody', el));
 }
 
 /* =========================== Employee Advances =========================== */
 async function viewAdvances(el) {
   const f = S.f.advances = S.f.advances || { tab: 'emp', page: 1, status: '', empId: '', q: '' };
   el.innerHTML = skel(6);
-  const r = await call('listAdvances', { page: f.page, status: f.status, empId: f.empId, q: f.q });
+  load('listAdvances', { page: f.page, status: f.status, empId: f.empId, q: f.q }, r => {
   if (!r || !r.ok) { el.innerHTML = errBox(); return bindRetry(el); }
   const s = r.summary;
   const empName = id => (r.byEmployee.find(e => e.EmpID === id) || {}).EmpName || id;
@@ -839,6 +945,7 @@ async function viewAdvances(el) {
   };
   $$('[data-adv]', body).forEach(tr => tr.onclick = () => openAdvance(tr.dataset.adv));
   bindPager(body, p => { f.page = p; viewAdvances(el); });
+  }, el);
 }
 
 async function openAdvance(id) {
@@ -900,59 +1007,37 @@ function formRecovery(a) {
 }
 
 /* =========================== Employees master =========================== */
-async function viewEmployees(el) {
+async function viewEmployees(el, params = {}) {
   const f = S.f.employees = S.f.employees || { q: '', showInactive: false };
   el.innerHTML = skel(6);
-  const r = await call('listEmployees');
+  load('listEmployees', params.refresh ? { refresh: '1' } : {}, r => {
   if (!r || !r.ok) { el.innerHTML = errBox(); return bindRetry(el); }
+  S.params = {};
   const all = r.rows;
+  S.employees = all.filter(e => e.Active).map(e => ({ id: e.EmpID, name: e.Name, dept: e.Department }));
   const render = () => {
     const q = f.q.toLowerCase();
     const rows = all.filter(e => (f.showInactive || e.Active) && (!q || JSON.stringify(e).toLowerCase().includes(q)));
     $('#empBody', el).innerHTML = `<div class="table-card"><div class="tbl-wrap"><table class="tbl">
       <thead><tr><th>Emp ID</th><th>Name</th><th>Department</th><th>Mobile</th><th>Status</th></tr></thead>
-      <tbody>${rows.map(e => `<tr class="click" data-id="${esc(e.EmpID)}"><td>${esc(e.EmpID)}</td><td>${esc(e.Name)}</td><td>${esc(e.Department)}</td>
+      <tbody>${rows.map(e => `<tr><td>${esc(e.EmpID)}</td><td>${esc(e.Name)}</td><td>${esc(e.Department)}</td>
         <td>${esc(e.Mobile)}</td><td>${badge(e.Active ? 'Active' : 'Inactive')}</td></tr>`).join('') ||
         '<tr><td colspan="5">' + emptyBox('No employees found') + '</td></tr>'}</tbody></table></div></div>
       <div class="pager muted sm">${rows.length} employees</div>`;
-    $$('[data-id]', el).forEach(tr => tr.onclick = () => formEmployee(all.find(e => e.EmpID === tr.dataset.id)));
   };
-  el.innerHTML = `<div class="toolbar">
+  el.innerHTML = `<div class="note">Employees come from the company <b>Employee Master</b> sheet. Add or update employees there; changes show here within 5 minutes, or tap Sync now.</div>
+    <div class="toolbar">
       <input class="input search" id="q" placeholder="Search employee…" value="${esc(f.q)}" />
       <label class="check"><input type="checkbox" id="inact" ${f.showInactive ? 'checked' : ''}/> Show inactive</label>
       <span class="spacer"></span>
       <button class="btn btn-ghost" id="exp">Export CSV</button>
-      <button class="btn btn-primary btn-auto" id="add">+ Add Employee</button></div><div id="empBody"></div>`;
+      <button class="btn btn-primary btn-auto" id="sync">Sync now</button></div><div id="empBody"></div>`;
   $('#q', el).oninput = e => { f.q = e.target.value; render(); };
   $('#inact', el).onchange = e => { f.showInactive = e.target.checked; render(); };
-  $('#add', el).onclick = () => formEmployee(null);
+  $('#sync', el).onclick = () => viewEmployees(el, { refresh: true });
   $('#exp', el).onclick = () => exportCSV('employees', [['EmpID', 'Emp ID'], ['Name', 'Name'], ['Department', 'Department'], ['Mobile', 'Mobile'], ['Active', 'Active']], all);
   render();
-}
-
-function formEmployee(emp) {
-  const isNew = !emp, e0 = emp || { Name: '', Department: '', Mobile: '', Active: true };
-  const box = openModal(`
-    <div class="m-head"><div><div class="m-title">${isNew ? 'Add Employee' : 'Edit Employee'}</div>${isNew ? '' : `<div class="muted sm">${esc(e0.EmpID)}</div>`}</div><button class="x" data-close>&times;</button></div>
-    <form class="form" novalidate>
-      <label class="full">Name<input class="input" name="Name" maxlength="80" value="${esc(e0.Name)}" /></label>
-      <label>Department<input class="input" name="Department" maxlength="60" value="${esc(e0.Department)}" /></label>
-      <label>Mobile<input class="input" name="Mobile" inputmode="numeric" maxlength="10" value="${esc(e0.Mobile)}" /></label>
-      ${isNew ? '' : `<label class="check full"><input type="checkbox" name="Active" ${e0.Active ? 'checked' : ''}/> Active</label>`}
-      <div class="m-actions full"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn btn-primary btn-auto">Save</button></div>
-    </form>`);
-  const form = $('form', box);
-  form.onsubmit = async e => {
-    e.preventDefault();
-    const rec = formData(form);
-    if (!isNew) rec.EmpID = e0.EmpID; else rec.Active = true;
-    const err = vReq(rec.Name, 'Name') || (rec.Mobile && !/^\d{10}$/.test(rec.Mobile) ? 'Mobile must be 10 digits' : null);
-    if (err) return toast(err, false);
-    const r = await submit(form, 'saveEmployee', { record: JSON.stringify(rec) });
-    if (!r) return;
-    if (r.employees) S.employees = r.employees;
-    closeModal(); toast('Employee saved'); refreshView();
-  };
+  }, el);
 }
 
 /* =========================== Settings (Admin) =========================== */
@@ -1081,7 +1166,7 @@ $('#pinEye').onclick = () => {
   i.focus();
 };
 $('#logoutBtn').onclick = logout;
-$('#refreshBtn').onclick = () => { refreshView(); refreshBadge(); };
+$('#refreshBtn').onclick = () => { markStale(); refreshView(); refreshBadge(); };
 document.addEventListener('click', e => { if (e.target.closest('[data-close]')) closeModal(); });
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
@@ -1091,8 +1176,13 @@ document.addEventListener('keydown', e => {
 
 (function init() {
   const sess = store.get('session');
-  if (sess && sess.token) { S.token = sess.token; S.me = sess.me; startApp(); }
-  else showLogin();
+  if (!sess || !sess.token) return showLogin();
+  S.token = sess.token; S.me = sess.me;
+  const boot = store.get('boot');
+  if (boot && boot.me && boot.me.name === sess.me.name) {
+    applyStartup(boot); enterApp();                       // open instantly from last session
+    call('bootstrap', {}, true).then(r => { if (r && r.ok) { store.set('boot', r); applyStartup(r); } });
+  } else startApp();
 })();
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
