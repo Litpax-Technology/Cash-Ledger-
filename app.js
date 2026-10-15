@@ -167,7 +167,104 @@ function kpi(label, value, sub, opts = {}) {
     <div class="kpi-l">${esc(label)}</div><div class="kpi-v">${value}</div>${sub ? `<div class="kpi-s">${esc(sub)}</div>` : ''}</div>`;
 }
 const skel = (n = 5) => '<div class="skeleton"></div>'.repeat(n);
-const emptyBox = msg => `<div class="empty">${esc(msg)}</div>`;
+const emptyBox = msg => `<div class="empty"><svg class="empty-ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="8" y="12" width="32" height="26" rx="5"/><path d="M8 26h9l3 4h8l3-4h9"/><path d="M18 6l2 4M30 6l-2 4M24 4v5"/></svg><div>${esc(msg)}</div></div>`;
+
+/* person avatar: initials on an indigo tint picked from the name (single accent family) */
+const AV_TINTS = ['#635bff', '#4b45d6', '#7c74ff', '#3730a3', '#8b84ff', '#5048e5'];
+function avatar(name, size = '') {
+  const n = String(name || '?').trim();
+  const ini = n.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+  let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return `<span class="av ${size ? 'av-' + size : ''}" style="background:${AV_TINTS[h % AV_TINTS.length]}">${esc(ini)}</span>`;
+}
+const who = (name, sub) => `<span class="who-cell">${avatar(name, 'sm')}<span>${esc(name)}${sub ? ` <span class="muted sm">${esc(sub)}</span>` : ''}</span></span>`;
+const vTitle = v => (v.Purpose && v.Purpose !== 'General') ? v.Purpose : (v.Remarks ? String(v.Remarks).slice(0, 48) : 'Cash from Owner');
+const firstName = n => String(n || '').trim().split(/\s+/)[0] || '';
+
+function helloCard(sub, actions) {
+  const h = new Date().getHours(), g = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+  return `<div class="hello fade-in">
+    <div class="hello-l">${avatar(S.me.name, 'lg')}<div><div class="hello-t">${g}, ${esc(firstName(S.me.name))}</div><div class="hello-s">${sub}</div></div></div>
+    ${actions ? `<div class="hello-a">${actions}</div>` : ''}</div>`;
+}
+
+/* numbers in KPI cards count up once per session per page */
+function animateNums(root, key) {
+  S.anim = S.anim || {};
+  if (S.anim[key] || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  S.anim[key] = true;
+  $$('.kpi-v, .stat b', root).forEach(el => {
+    const txt = el.textContent.trim(), money = txt[0] === '₹', to = Number(txt.replace(/[^\d.-]/g, ''));
+    if (!isFinite(to) || to === 0) return;
+    const t0 = performance.now(), dur = 900;
+    const tick = t => {
+      const k = Math.min(1, (t - t0) / dur), v = Math.round(to * (1 - Math.pow(1 - k, 3)));
+      el.textContent = money ? inr(v) : String(v);
+      if (k < 1) requestAnimationFrame(tick); else el.textContent = txt;
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+/* ---- 30-day trend: two lines (Given / Spent), crosshair + tooltip ---- */
+const TREND = { W: 760, H: 230, l: 54, r: 14, t: 14, b: 30, given: '#635bff', spent: '#c2760a' };
+function niceMax(v) {
+  const p = Math.pow(10, Math.floor(Math.log10(v || 1)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p;
+  return 10 * p;
+}
+const shortInr = v => v >= 1e5 ? '₹' + +(v / 1e5).toFixed(1) + 'L' : v >= 1e3 ? '₹' + +(v / 1e3).toFixed(1) + 'k' : '₹' + v;
+const dLabel = d => new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+
+function trendChart(t) {
+  if (!t || !t.length) return '';
+  const C = TREND, max = niceMax(Math.max(1, ...t.map(d => Math.max(d.given, d.spent))));
+  const x = i => C.l + i * (C.W - C.l - C.r) / (t.length - 1);
+  const y = v => C.t + (C.H - C.t - C.b) * (1 - v / max);
+  const line = k => t.map((d, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(d[k]).toFixed(1)).join(' ');
+  const tg = t.reduce((s, d) => s + d.given, 0), ts = t.reduce((s, d) => s + d.spent, 0);
+  const grid = [0, .5, 1].map(f => `<line x1="${C.l}" x2="${C.W - C.r}" y1="${y(max * f)}" y2="${y(max * f)}" class="tg"/>
+    <text x="${C.l - 8}" y="${y(max * f) + 4}" text-anchor="end" class="tl">${shortInr(max * f)}</text>`).join('');
+  const xl = t.map((d, i) => ((i % 7 === 0 && i < t.length - 4) || i === t.length - 1) ? `<text x="${x(i)}" y="${C.H - 8}" text-anchor="${i === 0 ? 'start' : i === t.length - 1 ? 'end' : 'middle'}" class="tl">${dLabel(d.d)}</text>` : '').join('');
+  return `<div class="card trend fade-in"><div class="card-h">Cash given vs spent <span class="muted">last 30 days</span><span class="spacer"></span>
+      <span class="lgd"><i style="background:${C.given}"></i>Given <b>${inr(tg)}</b></span>
+      <span class="lgd"><i style="background:${C.spent}"></i>Spent <b>${inr(ts)}</b></span></div>
+    <div class="card-b"><div class="trend-wrap">
+      <svg class="trend-svg" viewBox="0 0 ${C.W} ${C.H}" role="img" aria-label="Cash given and spent per day, last 30 days">
+        ${grid}${xl}
+        <path d="${line('given')} L${x(t.length - 1)} ${y(0)} L${x(0)} ${y(0)} Z" class="ta"/>
+        <path d="${line('given')}" class="tline" stroke="${C.given}"/>
+        <path d="${line('spent')}" class="tline" stroke="${C.spent}"/>
+        <g class="tx-hover" style="display:none"><line class="tcross" y1="${C.t}" y2="${C.H - C.b}"/>
+          <circle r="5" class="tdot" fill="${C.given}"/><circle r="5" class="tdot" fill="${C.spent}"/></g>
+        <rect class="thit" x="${C.l}" y="0" width="${C.W - C.l - C.r}" height="${C.H}"/>
+      </svg><div class="ttip" style="display:none"></div></div></div></div>`;
+}
+
+function bindTrend(root, t) {
+  const svg = $('.trend-svg', root); if (!svg) return;
+  const C = TREND, max = niceMax(Math.max(1, ...t.map(d => Math.max(d.given, d.spent))));
+  const x = i => C.l + i * (C.W - C.l - C.r) / (t.length - 1);
+  const y = v => C.t + (C.H - C.t - C.b) * (1 - v / max);
+  const g = $('.tx-hover', svg), dots = $$('.tdot', svg), cross = $('.tcross', svg), tip = $('.ttip', root);
+  const move = e => {
+    const r = svg.getBoundingClientRect(), vx = (e.clientX - r.left) * C.W / r.width;
+    const i = Math.max(0, Math.min(t.length - 1, Math.round((vx - C.l) / ((C.W - C.l - C.r) / (t.length - 1)))));
+    const d = t[i], px = x(i);
+    g.style.display = ''; cross.setAttribute('x1', px); cross.setAttribute('x2', px);
+    dots[0].setAttribute('cx', px); dots[0].setAttribute('cy', y(d.given));
+    dots[1].setAttribute('cx', px); dots[1].setAttribute('cy', y(d.spent));
+    tip.innerHTML = `<b>${dLabel(d.d)}</b><div><i style="background:${C.given}"></i>Given <span>${inr(d.given)}</span></div><div><i style="background:${C.spent}"></i>Spent <span>${inr(d.spent)}</span></div>`;
+    tip.style.display = '';
+    const left = px * r.width / C.W;
+    tip.style.left = Math.min(Math.max(left, 70), r.width - 70) + 'px';
+  };
+  const hit = $('.thit', svg);
+  hit.addEventListener('pointermove', move);
+  hit.addEventListener('pointerdown', move);
+  hit.addEventListener('pointerleave', () => { g.style.display = 'none'; tip.style.display = 'none'; });
+}
+
 const errBox = () => `<div class="empty">Could not load data. <button class="btn btn-ghost btn-sm" data-retry>Retry</button></div>`;
 function bindRetry(el) { const b = $('[data-retry]', el); if (b) b.onclick = refreshView; }
 function opts(list, sel, placeholder) {
@@ -338,7 +435,7 @@ function applyStartup(r) {
 function enterApp() {
   $('#loginView').classList.add('hidden');
   $('#appView').classList.remove('hidden');
-  $('#who').innerHTML = `${esc(S.me.name)}<small>${esc(S.me.role)}</small>`;
+  $('#who').innerHTML = `${avatar(S.me.name)}<span>${esc(S.me.name)}<small>${esc(S.me.role)}</small></span>`;
   buildNav();
   if (S.badge !== undefined) setBadge(S.badge);
   go(isMgr() ? 'dashboard' : 'mycash');
@@ -384,10 +481,27 @@ const ICONS = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'
 };
 
+const SHORT = { dashboard: 'Home', approvals: 'Approve', mycash: 'My Cash', vouchers: 'Entries', expenses: 'Expenses',
+  ledger: 'Ledger', advances: 'Advances', employees: 'Employees', settings: 'Settings' };
+const icon = id => `<svg viewBox="0 0 24 24">${ICONS[id] || ''}</svg>`;
+
 function buildNav() {
-  $('#nav').innerHTML = NAV.filter(n => n.roles.includes(role()))
-    .map(n => `<a class="nav-item" data-id="${n.id}"><span class="ni"><svg viewBox="0 0 24 24">${ICONS[n.id] || ''}</svg>${n.label}</span>${n.id === 'approvals' ? '<span class="count hidden" id="apprCount"></span>' : ''}</a>`).join('');
+  const items = NAV.filter(n => n.roles.includes(role()));
+  $('#nav').innerHTML = items
+    .map(n => `<a class="nav-item" data-id="${n.id}"><span class="ni">${icon(n.id)}${n.label}</span>${n.id === 'approvals' ? '<span class="count hidden appr-count"></span>' : ''}</a>`).join('');
   $$('.nav-item').forEach(a => a.onclick = () => go(a.dataset.id));
+  // phones: bottom tab bar (max 5 slots; the rest go under "More")
+  const main = items.length > 5 ? items.slice(0, 4) : items, more = items.length > 5 ? items.slice(4) : [];
+  $('#bnav').style.gridTemplateColumns = `repeat(${main.length + (more.length ? 1 : 0)}, 1fr)`;
+  $('#bnav').innerHTML = main.map(n => `<a class="bn-item" data-id="${n.id}">${icon(n.id)}<span>${SHORT[n.id]}</span>${n.id === 'approvals' ? '<i class="count hidden appr-count"></i>' : ''}</a>`).join('') +
+    (more.length ? `<a class="bn-item" data-more><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg><span>More</span></a>` : '');
+  $$('#bnav [data-id]').forEach(a => a.onclick = () => go(a.dataset.id));
+  const m = $('#bnav [data-more]');
+  if (m) m.onclick = () => {
+    const box = openModal(`<div class="m-head"><div><div class="m-title">More</div></div><button class="x" data-close>&times;</button></div>
+      <div class="pick-list">${more.map(n => `<button class="pick" data-id="${n.id}"><span class="ni-row">${icon(n.id)}<b>${n.label}</b></span><span class="right">→</span></button>`).join('')}</div>`);
+    $$('[data-id]', box).forEach(b => b.onclick = () => { closeModal(); go(b.dataset.id); });
+  };
   $('#todayTxt').textContent = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
@@ -395,7 +509,9 @@ function go(id, params = {}) {
   const allowed = NAV.filter(n => n.roles.includes(role()));
   const item = allowed.find(n => n.id === id) || allowed[0];
   S.view = item.id; S.params = params;
-  $$('.nav-item').forEach(a => a.classList.toggle('active', a.dataset.id === item.id));
+  $$('.nav-item, .bn-item[data-id]').forEach(a => a.classList.toggle('active', a.dataset.id === item.id));
+  $('#fab').classList.toggle('hidden', item.id !== 'mycash');
+  const mb = $('#bnav [data-more]'); if (mb) mb.classList.toggle('active', !$('#bnav .bn-item.active[data-id]'));
   $('#pageTitle').textContent = item.label;
   const page = $('#page'), host = document.createElement('div');
   page.replaceChildren(host);
@@ -407,10 +523,7 @@ function refreshView() { if (S.view) go(S.view, S.params); }
 
 function setBadge(n) {
   S.badge = n;
-  const el = $('#apprCount');
-  if (!el) return;
-  el.textContent = n;
-  el.classList.toggle('hidden', !n);
+  $$('.appr-count').forEach(el => { el.textContent = n; el.classList.toggle('hidden', !n); });
 }
 async function refreshBadge() {
   if (!isMgr()) return;
@@ -426,7 +539,12 @@ async function viewDashboard(el) {
   setBadge(r.kpi.pending);
   const k = r.kpi;
   const maxP = Math.max(1, ...r.byPurpose.map(p => p.amount));
+  const sub = (k.pending ? `<b>${k.pending}</b> item${k.pending > 1 ? 's' : ''} waiting for confirmation · ` : 'All caught up · ') +
+    `<b>${inr(k.cashOut)}</b> is with people right now`;
+  const acts = (k.pending ? `<button class="btn btn-primary btn-auto" data-nav="approvals">Review ${k.pending}</button>` : '') +
+    `<button class="btn btn-ghost" data-nav="vouchers">All entries</button>`;
   el.innerHTML = `
+    ${helloCard(sub, acts)}
     <div class="kpis">
       ${kpi('Cash with people', inr(k.cashOut), 'Given, not yet accounted', { hl: true })}
       ${kpi('Pending confirmations', k.pending, 'Cash given / returns to confirm', { go: 'approvals' })}
@@ -436,10 +554,11 @@ async function viewDashboard(el) {
       ${kpi('Spent this month', inr(k.spentMonth), k.noBill + ' expenses without bill', { go: 'expenses' })}
       ${kpi('Advance outstanding', inr(k.advOut), k.advEmp + ' employees', { go: 'advances' })}
     </div>
+    ${trendChart(r.trend)}
     <div class="grid2">
       <div class="card"><div class="card-h">Who holds how much <span class="muted">Open entries · click for ledger</span></div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Person</th><th class="right">Open</th><th class="right">Given</th><th class="right">Spent</th><th class="right">Balance</th><th class="right">Oldest</th></tr></thead>
-        <tbody>${r.persons.map(p => `<tr class="click" data-person="${esc(p.person)}"><td>${esc(p.person)}${p.overdue ? ' <span class="badge b-rejected">' + p.overdue + ' overdue</span>' : ''}</td>
+        <tbody>${r.persons.map(p => `<tr class="click" data-person="${esc(p.person)}"><td>${who(p.person)}${p.overdue ? ' <span class="badge b-rejected">' + p.overdue + ' overdue</span>' : ''}</td>
           <td class="right">${p.open}</td><td class="right">${inr(p.given)}</td><td class="right">${inr(p.spent)}</td>
           <td class="right"><b class="${p.balance < 0 ? 'neg' : ''}">${inr(p.balance)}</b></td><td class="right">${p.oldestDays}d</td></tr>`).join('') ||
           '<tr><td colspan="6">' + emptyBox('Nobody is holding cash right now') + '</td></tr>'}</tbody></table></div></div>
@@ -451,7 +570,7 @@ async function viewDashboard(el) {
     <div class="grid2" style="margin-top:18px">
       <div class="card"><div class="card-h">Overdue entries <span class="muted">older than ${r.overdueDays} days with balance</span></div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Entry</th><th>Person</th><th>Purpose</th><th class="right">Balance</th><th class="right">Days</th></tr></thead>
-        <tbody>${r.overdue.map(v => `<tr class="click" data-v="${esc(v.VoucherID)}"><td>${esc(v.VoucherID)}</td><td>${esc(v.Person)}</td><td>${esc(v.Purpose)}</td>
+        <tbody>${r.overdue.map(v => `<tr class="click" data-v="${esc(v.VoucherID)}"><td>${esc(v.VoucherID)}</td><td>${esc(v.Person)}</td><td>${esc(vTitle(v))}</td>
           <td class="right"><b>${inr(v.Balance)}</b></td><td class="right neg">${v.Days}</td></tr>`).join('') ||
           '<tr><td colspan="5">' + emptyBox('No overdue entries') + '</td></tr>'}</tbody></table></div></div>
       <div class="card"><div class="card-h">Expenses without bill <span class="muted">this month</span></div>
@@ -462,6 +581,9 @@ async function viewDashboard(el) {
     </div>`;
   $$('[data-go]', el).forEach(c => c.onclick = () => go(c.dataset.go, c.dataset.go === 'vouchers' ? { overdue: true } : {}));
   $$('[data-person]', el).forEach(tr => tr.onclick = () => go('ledger', { person: tr.dataset.person }));
+  $$('[data-nav]', el).forEach(b => b.onclick = () => go(b.dataset.nav));
+  if (r.trend) bindTrend(el, r.trend);
+  animateNums(el, 'dash');
   $$('[data-v]', el).forEach(tr => tr.onclick = () => openVoucher(tr.dataset.v));
   }, el);
 }
@@ -479,12 +601,12 @@ async function viewApprovals(el) {
     ${!canAct ? '<div class="note">Only the Owner can confirm or reject. You can view pending items here.</div>' : ''}
     <div class="card"><div class="card-h">Cash given — waiting for confirmation <span class="muted">${r.vouchers.length}</span></div>
       <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Person</th><th>Purpose</th><th class="right">Amount</th><th>Mode</th><th>Remarks</th><th></th></tr></thead>
-      <tbody>${r.vouchers.map(v => `<tr><td>${esc(v.Date)}</td><td><b>${esc(v.Person)}</b></td><td>${esc(v.Purpose)}</td>
+      <tbody>${r.vouchers.map(v => `<tr><td>${esc(v.Date)}</td><td>${who(v.Person)}</td><td>${esc(vTitle(v))}</td>
         <td class="right"><b>${inr(v.Amount)}</b></td><td>${esc(v.Mode)}</td><td class="wrap">${esc(v.Remarks)}</td><td class="right">${btns('V', v.VoucherID)}</td></tr>`).join('') ||
         '<tr><td colspan="7">' + emptyBox('Nothing to confirm') + '</td></tr>'}</tbody></table></div></div>
     <div class="card"><div class="card-h">Cash returned — waiting for confirmation <span class="muted">${r.returns.length}</span></div>
       <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Person</th><th>Entry</th><th class="right">Amount</th><th>Mode</th><th>Remarks</th><th></th></tr></thead>
-      <tbody>${r.returns.map(x => `<tr><td>${esc(x.Date)}</td><td><b>${esc(x.Person)}</b></td><td><a href="#" data-v="${esc(x.VoucherID)}">${esc(x.VoucherID)}</a> · ${esc(x.Purpose)}</td>
+      <tbody>${r.returns.map(x => `<tr><td>${esc(x.Date)}</td><td>${who(x.Person)}</td><td><a href="#" data-v="${esc(x.VoucherID)}">${esc(x.VoucherID)}</a> · ${esc(vTitle(x))}</td>
         <td class="right"><b>${inr(x.Amount)}</b></td><td>${esc(x.Mode)}</td><td class="wrap">${esc(x.Remarks)}</td><td class="right">${btns('R', x.ReturnID)}</td></tr>`).join('') ||
         '<tr><td colspan="7">' + emptyBox('Nothing to confirm') + '</td></tr>'}</tbody></table></div></div>`;
 
@@ -516,13 +638,24 @@ async function viewMyCash(el) {
   $$('[data-status]', el).forEach(c => c.onclick = () => { f.status = c.dataset.status; f.page = 1; viewMyCash(el); });
   $('#newCash', el).onclick = formVoucher;
   $('#quickExp', el).onclick = () => quickExpense(S.openList);
+  $('#fab').onclick = () => {
+    const box = openModal(`<div class="m-head"><div><div class="m-title">What do you want to add?</div></div><button class="x" data-close>&times;</button></div>
+      <div class="pick-list">
+        <button class="pick" data-a="cash"><span><b>Cash Received</b><small>Owner gave you cash</small></span><span class="right">→</span></button>
+        <button class="pick" data-a="exp"><span><b>Expense</b><small>You paid from the cash you hold</small></span><span class="right">→</span></button>
+      </div>`);
+    $('[data-a="cash"]', box).onclick = formVoucher;
+    $('[data-a="exp"]', box).onclick = () => quickExpense(S.openList);
+  };
 
   load('listVouchers', { page: f.page, status: f.status, mine: '1' }, r => {
   const body = $('#mcBody', el);
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
   const s = r.summary;
   S.openList = r.openList || [];
-  body.innerHTML = `<div class="kpis">
+  const sub = `<b>${inr(s.cashInHand)}</b> cash in hand · ${s.open} open entr${s.open === 1 ? 'y' : 'ies'}` +
+    (s.pending ? ` · <b>${s.pending}</b> waiting for Owner` : '') + (s.overdue ? ` · <span class="neg">${s.overdue} overdue</span>` : '');
+  body.innerHTML = `${helloCard(sub)}<div class="kpis">
       ${kpi('Cash in hand', inr(s.cashInHand), 'Received but not yet accounted', { hl: true })}
       ${kpi('Open entries', s.open, s.overdue ? s.overdue + ' overdue' : 'Add expenses or return cash')}
       ${kpi('Waiting for Owner', s.pending, 'Not yet confirmed')}
@@ -534,9 +667,10 @@ async function viewMyCash(el) {
   $$('[data-add]', body).forEach(b => b.onclick = e => {
     e.stopPropagation();
     const v = r.rows.find(x => x.VoucherID === b.dataset.add);
-    formExpense(v, v.Purpose === S.settings.advancePurpose);
+    formExpense(v);
   });
   bindPager(body, p => { f.page = p; viewMyCash(el); });
+  animateNums(body, 'mycash');
   }, $('#mcBody', el));
 }
 
@@ -544,7 +678,7 @@ function vCard(v) {
   const amt = num(v.Amount);
   const used = amt ? Math.min(100, (num(v.Spent) + num(v.Returned)) / amt * 100) : 0;
   return `<div class="vcard fade-in" data-v="${esc(v.VoucherID)}">
-    <div class="vc-top"><div><div class="vc-title">${esc(v.Purpose)}</div>
+    <div class="vc-top"><div><div class="vc-title">${esc(vTitle(v))}</div>
       <div class="muted sm">${esc(v.VoucherID)} · ${esc(v.Date)} · ${esc(v.Mode)}</div></div>${badge(v.Status, v.Overdue)}</div>
     <div class="vc-nums"><div><span>Received</span><b>${inr(amt)}</b></div><div><span>Spent</span><b>${inr(v.Spent)}</b></div>
       <div><span>Returned</span><b>${inr(v.Returned)}</b></div><div><span>Balance</span><b class="${num(v.Balance) < 0 ? 'neg' : ''}">${inr(v.Balance)}</b></div></div>
@@ -557,12 +691,12 @@ function vCard(v) {
 /* "+ Expense" from the toolbar: pick the open entry (or go straight in if there is one) */
 function quickExpense(list) {
   if (!list || !list.length) return toast('No open entry yet. Add "Cash Received" and wait for Owner confirmation.', false);
-  const go1 = v => formExpense(v, v.Purpose === S.settings.advancePurpose);
+  const go1 = v => formExpense(v);
   if (list.length === 1) return go1(list[0]);
   const box = openModal(`<div class="m-head"><div><div class="m-title">Add expense to</div>
       <div class="muted sm">Choose the cash entry this expense was paid from</div></div><button class="x" data-close>&times;</button></div>
     <div class="pick-list">${list.map(v => `<button class="pick" data-v="${esc(v.VoucherID)}">
-      <span><b>${esc(v.Purpose)}</b><small>${esc(v.VoucherID)} · ${esc(v.Date)}</small></span>
+      <span><b>${esc(vTitle(v))}</b><small>${esc(v.VoucherID)} · ${esc(v.Date)}</small></span>
       <span class="right"><small>Balance</small><b>${inr(v.Balance)}</b></span></button>`).join('')}</div>`);
   $$('[data-v]', box).forEach(b => b.onclick = () => go1(list.find(x => x.VoucherID === b.dataset.v)));
 }
@@ -575,7 +709,6 @@ async function viewVouchers(el, params = {}) {
       <input class="input search" id="q" placeholder="Search entry, person, remarks…" value="${esc(f.q)}" />
       <select class="input" id="fStatus">${opts(['Pending Confirm', 'Open', 'Closed', 'Rejected'], f.status, 'All statuses')}</select>
       <select class="input" id="fPerson">${opts(S.persons, f.person, 'All persons')}</select>
-      <select class="input" id="fPurpose">${opts(S.cfg.Purpose, f.purpose, 'All purposes')}</select>
       <label class="check"><input type="checkbox" id="fOver" ${f.overdue ? 'checked' : ''}/> Overdue only</label>
       <span class="spacer"></span><button class="btn btn-ghost" id="exp">Export CSV</button>
     </div><div id="vBody">${skel(6)}</div>`;
@@ -583,7 +716,6 @@ async function viewVouchers(el, params = {}) {
   $('#q', el).oninput = debounce(e => { f.q = e.target.value; reload(); });
   $('#fStatus', el).onchange = e => { f.status = e.target.value; reload(); };
   $('#fPerson', el).onchange = e => { f.person = e.target.value; reload(); };
-  $('#fPurpose', el).onchange = e => { f.purpose = e.target.value; reload(); };
   $('#fOver', el).onchange = e => { f.overdue = e.target.checked; reload(); };
   const params2 = () => ({ q: f.q, status: f.status, person: f.person, purpose: f.purpose, overdue: f.overdue ? '1' : '' });
   $('#exp', el).onclick = async e => {
@@ -598,10 +730,10 @@ async function viewVouchers(el, params = {}) {
   if (!body) return;
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
   body.innerHTML = `<div class="table-card"><div class="tbl-wrap"><table class="tbl">
-    <thead><tr><th>Entry</th><th>Date</th><th>Person</th><th>Purpose</th><th class="right">Amount</th><th class="right">Spent</th>
+    <thead><tr><th>Entry</th><th>Date</th><th>Person</th><th>Note</th><th class="right">Amount</th><th class="right">Spent</th>
       <th class="right">Returned</th><th class="right">Balance</th><th>Status</th></tr></thead>
-    <tbody>${r.rows.map(v => `<tr class="click" data-v="${esc(v.VoucherID)}"><td>${esc(v.VoucherID)}</td><td>${esc(v.Date)}</td><td>${esc(v.Person)}</td>
-      <td>${esc(v.Purpose)}</td><td class="right">${inr(v.Amount)}</td><td class="right">${inr(v.Spent)}</td><td class="right">${inr(v.Returned)}</td>
+    <tbody>${r.rows.map(v => `<tr class="click" data-v="${esc(v.VoucherID)}"><td>${esc(v.VoucherID)}</td><td>${esc(v.Date)}</td><td>${who(v.Person)}</td>
+      <td>${esc(vTitle(v))}</td><td class="right">${inr(v.Amount)}</td><td class="right">${inr(v.Spent)}</td><td class="right">${inr(v.Returned)}</td>
       <td class="right"><b class="${num(v.Balance) < 0 ? 'neg' : ''}">${inr(v.Balance)}</b></td><td>${badge(v.Status, v.Overdue)}</td></tr>`).join('') ||
       '<tr><td colspan="9">' + emptyBox('No entries found') + '</td></tr>'}</tbody></table></div></div>${pager(r)}`;
   $$('[data-v]', body).forEach(tr => tr.onclick = () => openVoucher(tr.dataset.v));
@@ -618,7 +750,7 @@ async function openVoucher(id, pre) {
 
 function renderVoucher(box, r, id) {
   if ($('#modal').classList.contains('hidden')) return;
-  if (!r || !r.ok) {
+  if (!r || !r.ok || !r.voucher) {
     box.innerHTML = `<div class="m-head"><div><div class="m-title">${esc(id)}</div></div><button class="x" data-close>&times;</button></div>${errBox()}`;
     const b = $('[data-retry]', box); if (b) b.onclick = () => openVoucher(id);
     return;
@@ -636,7 +768,7 @@ function renderVoucher(box, r, id) {
   if (own && isOpen) actions.push('<button class="btn btn-ghost" data-a="return">Return Cash</button>', '<button class="btn btn-primary btn-auto" data-a="expense">+ Add Expense</button>');
 
   box.innerHTML = `
-    <div class="m-head"><div><div class="m-title">${esc(v.Purpose)} · ${esc(v.VoucherID)}</div>
+    <div class="m-head"><div><div class="m-title">${esc(vTitle(v))} · ${esc(v.VoucherID)}</div>
       <div class="muted sm">${esc(v.Person)} · ${esc(v.Date)} · ${esc(v.Mode)} · ${v.Days} day${v.Days === 1 ? '' : 's'} old</div></div>
       ${badge(v.Status, v.Overdue)}<button class="x" data-close>&times;</button></div>
     <div class="stat-row">
@@ -652,12 +784,12 @@ function renderVoucher(box, r, id) {
     ${v.Status === 'Closed' ? `<div class="note">Closed by ${esc(v.ClosedBy)} on ${esc(v.ClosedAt)}${v.CloseNote ? ' — ' + esc(v.CloseNote) : ''}</div>` : ''}
 
     <div class="m-section"><h4>Expenses (${r.expenses.length})</h4>
-      <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>${r.isAdvance ? 'Employee' : 'Paid to'}</th><th>Description</th>
+      <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Purpose</th><th>Paid to</th><th>Description</th>
         <th class="right">Amount</th><th>Bill</th>${canDelExp ? '<th></th>' : ''}</tr></thead>
-      <tbody>${r.expenses.map(e => `<tr><td>${esc(e.Date)}</td><td>${esc(e.PaidTo)}${e.AdvanceID ? ` <span class="muted sm">${esc(e.AdvanceID)}</span>` : ''}</td>
+      <tbody>${r.expenses.map(e => `<tr><td>${esc(e.Date)}</td><td><span class="tx ${e.AdvanceID ? 'tx-adv' : 'tx-pur'}">${esc(e.Purpose)}</span></td><td>${esc(e.PaidTo)}${e.AdvanceID ? ` <span class="muted sm">${esc(e.AdvanceID)}</span>` : ''}</td>
         <td class="wrap">${esc(e.Description)}</td><td class="right">${inr(e.Amount)}</td><td>${billLink(e.BillURL)}</td>
         ${canDelExp ? `<td class="right"><button class="icon-btn" title="Remove" data-del="${esc(e.ExpenseID)}">&times;</button></td>` : ''}</tr>`).join('') ||
-        `<tr><td colspan="6">${emptyBox('No expenses added yet')}</td></tr>`}</tbody></table></div></div></div>
+        `<tr><td colspan="7">${emptyBox('No expenses added yet')}</td></tr>`}</tbody></table></div></div></div>
 
     ${r.returns.length ? `<div class="m-section"><h4>Cash returned (${r.returns.length})</h4>
       <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th class="right">Amount</th><th>Mode</th><th>Remarks</th><th>Status</th>${isOwner() ? '<th></th>' : ''}</tr></thead>
@@ -694,7 +826,7 @@ function renderVoucher(box, r, id) {
     if (!(await confirmBox('Cancel entry', 'This entry will be removed. Continue?', 'Cancel entry', true))) return;
     if (await act(btn, 'cancelVoucher', { id })) { toast('Entry cancelled'); closeModal(); refreshView(); refreshBadge(); }
   };
-  if (A('expense')) A('expense').onclick = () => formExpense(v, r.isAdvance);
+  if (A('expense')) A('expense').onclick = () => formExpense(v);
   if (A('return')) A('return').onclick = () => formReturn(v, sum(pendRet, 'Amount'));
   $$('[data-del]', box).forEach(b => b.onclick = async () => {
     if (!(await confirmBox('Remove expense', 'This expense will be removed from the entry.', 'Remove', true))) return;
@@ -712,16 +844,14 @@ function renderVoucher(box, r, id) {
 /* =========================== Forms: cash / expense / return =========================== */
 function formVoucher() {
   const key = 'voucher', d = getDraft(key), ref = d.ClientRef || uid();
-  const purposes = S.cfg.Purpose.filter(p => p !== S.settings.advancePurpose || isAdvMgr());
   const box = openModal(`
     <div class="m-head"><div><div class="m-title">Cash Received from Owner</div></div><button class="x" data-close>&times;</button></div>
     <form class="form" novalidate>
       <label>Date<input class="input" type="date" name="Date" max="${today()}" value="${esc(d.Date || today())}" /></label>
       <label>Amount (₹)<input class="input" type="number" name="Amount" inputmode="decimal" min="1" step="0.01" value="${esc(d.Amount || '')}" placeholder="0" /></label>
-      <label>Purpose<select class="input" name="Purpose">${opts(purposes, d.Purpose, 'Select purpose')}</select></label>
-      <label>Payment mode<select class="input" name="Mode">${opts(S.cfg.PaymentMode, d.Mode || S.cfg.PaymentMode[0], 'Select mode')}</select></label>
-      <label class="full">Remarks<textarea class="input" name="Remarks" rows="2" maxlength="300" placeholder="What is this cash for?">${esc(d.Remarks || '')}</textarea></label>
-      <p class="hint full">The Owner will confirm this entry. You can add expenses after confirmation.</p>
+      <label class="full">Payment mode<select class="input" name="Mode">${opts(S.cfg.PaymentMode, d.Mode || S.cfg.PaymentMode[0], 'Select mode')}</select></label>
+      <label class="full">Note <span class="muted sm">(optional)</span><textarea class="input" name="Remarks" rows="2" maxlength="300" placeholder="e.g. Cash for site visit, petty expenses">${esc(d.Remarks || '')}</textarea></label>
+      <p class="hint full">The Owner will confirm this entry. Then add each expense with its purpose.</p>
       <div class="m-actions full"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn btn-primary btn-auto">Submit</button></div>
     </form>`);
   const form = $('form', box);
@@ -729,7 +859,7 @@ function formVoucher() {
   form.onsubmit = async e => {
     e.preventDefault();
     const rec = formData(form); rec.ClientRef = ref;
-    const err = vDate(rec.Date) || vMoney(rec.Amount) || vReq(rec.Purpose, 'Purpose') || vReq(rec.Mode, 'Payment mode');
+    const err = vDate(rec.Date) || vMoney(rec.Amount) || vReq(rec.Mode, 'Payment mode');
     if (err) return toast(err, false);
     const r = await submit(form, 'createVoucher', { record: JSON.stringify(rec) });
     if (!r) return;
@@ -737,26 +867,31 @@ function formVoucher() {
   };
 }
 
-function formExpense(v, isAdvance) {
+function formExpense(v) {
   const key = 'exp_' + v.VoucherID, d = getDraft(key);
   let ref = d.ClientRef || uid(), bal = num(v.Balance), up = null, more = false;
+  const adv = S.settings.advancePurpose;
+  const purposes = S.cfg.Purpose.filter(p => p !== adv || isAdvMgr());
   const empOpts = S.employees.map(e => `<option value="${esc(e.id)}" ${e.id === d.EmpID ? 'selected' : ''}>${esc(e.name)}${e.id.indexOf('ROW-') ? ' · ' + esc(e.id) : ''}${e.dept ? ' — ' + esc(e.dept) : ''}</option>`).join('');
   const box = openModal(`
-    <div class="m-head"><div><div class="m-title">${isAdvance ? 'Advance Given to Employee' : 'Add Expense'}</div>
-      <div class="muted sm">${esc(v.VoucherID)} · ${esc(v.Purpose)} · Balance <b id="expBal">${inr(bal)}</b></div></div><button class="x" data-close>&times;</button></div>
+    <div class="m-head"><div><div class="m-title">Add Expense</div>
+      <div class="muted sm">${esc(v.VoucherID)} · ${esc(vTitle(v))} · Balance <b id="expBal">${inr(bal)}</b></div></div><button class="x" data-close>&times;</button></div>
     <form class="form" novalidate>
       <label>Date<input class="input" type="date" name="Date" max="${today()}" value="${esc(d.Date || today())}" /></label>
       <label>Amount (₹)<input class="input" type="number" name="Amount" inputmode="decimal" min="1" step="0.01" value="${esc(d.Amount || '')}" placeholder="0" /></label>
-      ${isAdvance
-        ? `<label class="full">Employee<select class="input" name="EmpID"><option value="">Select employee</option>${empOpts}</select>
-            ${S.employees.length ? '' : '<span class="hint">No employees found in the Employee Master.</span>'}</label>`
-        : `<label class="full">Paid to<input class="input" name="PaidTo" maxlength="120" value="${esc(d.PaidTo || '')}" placeholder="Vendor / shop / person" /></label>`}
-      <label class="full">Description<textarea class="input" name="Description" rows="2" maxlength="300" placeholder="${isAdvance ? 'Reason for advance (optional)' : 'What was bought / paid for'}">${esc(d.Description || '')}</textarea></label>
+      <label class="full">Purpose<select class="input" name="Purpose">${opts(purposes, d.Purpose, 'Select purpose')}</select></label>
+      <label class="full" id="empWrap">Employee<select class="input" name="EmpID"><option value="">Select employee</option>${empOpts}</select>
+        ${S.employees.length ? '<span class="hint">This amount will be added to the employee\'s advance khata.</span>' : '<span class="hint">No employees found in the Employee Master.</span>'}</label>
+      <label class="full" id="paidWrap">Paid to<input class="input" name="PaidTo" maxlength="120" value="${esc(d.PaidTo || '')}" placeholder="Vendor / shop / person" /></label>
+      <label class="full">Description<textarea class="input" name="Description" rows="2" maxlength="300" placeholder="What was bought / paid for">${esc(d.Description || '')}</textarea></label>
       <label class="full file-pick" id="pick"><input type="file" accept="image/*,application/pdf" /><span id="pickTxt">Attach bill photo (optional)</span></label>
       <div class="m-actions full"><button type="button" class="btn btn-ghost" data-close>Close</button>
         <button type="submit" class="btn btn-ghost" data-more>Save &amp; add another</button>
         <button type="submit" class="btn btn-primary btn-auto">Save</button></div>
     </form>`);
+  const isAdv = () => $('[name=Purpose]', box).value === adv;
+  const syncPurpose = () => { $('#empWrap', box).classList.toggle('hidden', !isAdv()); $('#paidWrap', box).classList.toggle('hidden', isAdv()); };
+  $('[name=Purpose]', box).addEventListener('change', syncPurpose); syncPurpose();
   const form = $('form', box), fileIn = $('input[type=file]', box), pick = $('#pick', box), pickTxt = $('#pickTxt', box);
   trackDraft(form, key, () => ref);
   $('[data-more]', form).addEventListener('click', () => { more = true; });
@@ -786,7 +921,9 @@ function formExpense(v, isAdvance) {
     e.preventDefault();
     if (form.dataset.busy === '1') return;
     const rec = formData(form); rec.VoucherID = v.VoucherID; rec.ClientRef = ref;
-    const err = vDate(rec.Date) || vMoney(rec.Amount) || (isAdvance ? vReq(rec.EmpID, 'Employee') : vReq(rec.PaidTo, 'Paid to'));
+    const advance = rec.Purpose === adv;
+    if (advance) rec.PaidTo = ''; else rec.EmpID = '';
+    const err = vDate(rec.Date) || vMoney(rec.Amount) || vReq(rec.Purpose, 'Purpose') || (advance ? vReq(rec.EmpID, 'Employee') : vReq(rec.PaidTo, 'Paid to'));
     if (err) return toast(err, false);
     if (num(rec.Amount) > bal) {
       const ok = await confirmBox('More than balance', `This is ${inr(num(rec.Amount) - bal)} more than your balance. The extra will show as payable by the Owner. Continue?`, 'Continue');
@@ -805,7 +942,7 @@ function formExpense(v, isAdvance) {
     const r = await submit(form, 'addExpense', { record: JSON.stringify(rec) });
     if (!r) return;
     clearDraft(key);
-    toast(isAdvance ? 'Advance recorded' : 'Expense saved');
+    toast(advance ? 'Advance recorded in employee khata' : 'Expense saved');
     refreshView();
     if (r.detail) memoSet('voucherDetail', { id: v.VoucherID }, r.detail);
     if (!more) return openVoucher(v.VoucherID, r.detail);
@@ -813,7 +950,7 @@ function formExpense(v, isAdvance) {
     bal = num(r.balance != null ? r.balance : bal - num(rec.Amount));
     $('#expBal', box).textContent = inr(bal);
     ref = uid();
-    ['Amount', 'PaidTo', 'Description', 'EmpID'].forEach(n => { const f = $(`[name=${n}]`, form); if (f) f.value = ''; });
+    ['Amount', 'PaidTo', 'Description', 'EmpID'].forEach(n => { const f = $(`[name=${n}]`, form); if (f) f.value = ''; });   // purpose stays for the next one
     resetPick();
     $('[name=Amount]', form).focus();
   };
@@ -879,7 +1016,7 @@ async function viewExpenses(el) {
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
   body.innerHTML = `<div class="table-card"><div class="tbl-wrap"><table class="tbl">
     <thead><tr><th>Date</th><th>Person</th><th>Purpose</th><th>Paid to</th><th>Description</th><th class="right">Amount</th><th>Bill</th><th>Entry</th></tr></thead>
-    <tbody>${r.rows.map(e => `<tr><td>${esc(e.Date)}</td><td>${esc(e.Person)}</td><td>${esc(e.Purpose)}</td><td>${esc(e.PaidTo)}</td>
+    <tbody>${r.rows.map(e => `<tr><td>${esc(e.Date)}</td><td>${who(e.Person)}</td><td>${esc(e.Purpose)}</td><td>${esc(e.PaidTo)}</td>
       <td class="wrap">${esc(e.Description)}</td><td class="right">${inr(e.Amount)}</td><td>${billLink(e.BillURL)}</td>
       <td><a href="#" data-v="${esc(e.VoucherID)}">${esc(e.VoucherID)}</a></td></tr>`).join('') ||
       '<tr><td colspan="8">' + emptyBox('No expenses found') + '</td></tr>'}</tbody>
@@ -961,7 +1098,7 @@ async function viewAdvances(el) {
       <thead><tr><th>Employee</th><th class="right">Times taken</th><th class="right">Total taken</th><th class="right">Recovered</th>
         <th class="right">To recover</th><th>Last advance</th><th>Last recovery</th></tr></thead>
       <tbody>${emps.map(e => `<tr class="click" data-emp="${esc(e.EmpID)}">
-        <td><b>${esc(e.EmpName)}</b> <span class="muted sm">${esc(e.EmpID)}</span></td>
+        <td>${who(e.EmpName, e.EmpID)}</td>
         <td class="right">${e.count}</td><td class="right">${inr(e.total)}</td><td class="right pos">${inr(e.recovered)}</td>
         <td class="right"><b class="${e.outstanding > 0 ? 'acc-t' : 'muted'}">${inr(e.outstanding)}</b></td>
         <td>${esc(e.lastAdvance || '—')}</td><td>${esc(e.lastRecovery || '—')}</td></tr>`).join('') ||
@@ -1019,7 +1156,7 @@ function renderEmpAdvance(box, r, empId) {
          <td class="right"></td><td class="right pos">${inr(x.amount)}</td><td class="right"><b>${inr(x.balance)}</b></td>
          ${mgr ? `<td class="right"><button class="icon-btn" title="Remove recovery" data-del="${esc(x.key)}">&times;</button></td>` : ''}</tr>`;
   box.innerHTML = `
-    <div class="m-head"><div><div class="m-title">${esc(e.EmpName)}</div>
+    <div class="m-head">${avatar(e.EmpName, 'lg')}<div><div class="m-title">${esc(e.EmpName)}</div>
       <div class="muted sm">${esc(e.EmpID)} · Advance khata</div></div>
       ${t.outstanding > 0 ? badge(t.recovered > 0 ? 'Partly Recovered' : 'Outstanding') : badge('Recovered')}<button class="x" data-close>&times;</button></div>
     <div class="stat-row" style="grid-template-columns:repeat(3,1fr)">
