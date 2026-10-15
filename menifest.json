@@ -1,0 +1,13 @@
+{
+  "name": "Litpax Cash Ledger",
+  "short_name": "Cash Ledger",
+  "description": "Track cash given by the Owner, expenses, returns and employee advances",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f8fc",
+  "theme_color": "#1e1b4b",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
