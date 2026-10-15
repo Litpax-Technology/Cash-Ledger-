@@ -940,13 +940,12 @@ async function viewAdvances(el) {
   load('listAdvances', { page: f.page, status: f.status, empId: f.empId, q: f.q }, r => {
   if (!r || !r.ok) { el.innerHTML = errBox(); return bindRetry(el); }
   const s = r.summary;
-  const empName = id => (r.byEmployee.find(e => e.EmpID === id) || {}).EmpName || id;
   el.innerHTML = `<div class="kpis">
       ${kpi('Total outstanding', inr(s.totalOut), 'to be recovered', { hl: true })}
       ${kpi('Employees with advance', s.empCount, 'outstanding > 0')}
       ${kpi('Recovered this month', inr(s.recMonth), 'salary + cash')}
     </div>
-    <p class="hint" style="margin:-6px 0 14px">Advances are created when HR adds an expense on an "${esc(S.settings.advancePurpose)}" cash entry.</p>
+    <p class="hint" style="margin:-6px 0 14px">Click an employee to see the full khata: every advance, every recovery and the balance.</p>
     <div class="tabs"><button class="tab ${f.tab === 'emp' ? 'on' : ''}" data-tab="emp">By Employee</button>
       <button class="tab ${f.tab === 'list' ? 'on' : ''}" data-tab="list">All Advances</button></div>
     <div id="aBody"></div>`;
@@ -954,13 +953,23 @@ async function viewAdvances(el) {
   const body = $('#aBody', el);
 
   if (f.tab === 'emp') {
-    body.innerHTML = `<div class="table-card"><div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>Employee</th><th class="right">Advances</th><th class="right">Total given</th><th class="right">Recovered</th><th class="right">Outstanding</th></tr></thead>
-      <tbody>${r.byEmployee.map(e => `<tr class="click" data-emp="${esc(e.EmpID)}"><td>${esc(e.EmpName)} <span class="muted sm">${esc(e.EmpID)}</span></td>
-        <td class="right">${e.count}</td><td class="right">${inr(e.total)}</td><td class="right">${inr(e.recovered)}</td>
-        <td class="right"><b>${inr(e.outstanding)}</b></td></tr>`).join('') ||
-        '<tr><td colspan="5">' + emptyBox('No advances yet') + '</td></tr>'}</tbody></table></div></div>`;
-    $$('[data-emp]', body).forEach(tr => tr.onclick = () => { f.tab = 'list'; f.empId = tr.dataset.emp; f.page = 1; viewAdvances(el); });
+    const emps = r.byEmployee.filter(e => !f.q || (e.EmpName + ' ' + e.EmpID).toLowerCase().includes(f.q.toLowerCase()));
+    body.innerHTML = `<div class="toolbar">
+        <input class="input search" id="q" placeholder="Search employee…" value="${esc(f.q)}" />
+        <span class="spacer"></span><button class="btn btn-ghost" id="exp">Export CSV</button></div>
+      <div class="table-card"><div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>Employee</th><th class="right">Times taken</th><th class="right">Total taken</th><th class="right">Recovered</th>
+        <th class="right">To recover</th><th>Last advance</th><th>Last recovery</th></tr></thead>
+      <tbody>${emps.map(e => `<tr class="click" data-emp="${esc(e.EmpID)}">
+        <td><b>${esc(e.EmpName)}</b> <span class="muted sm">${esc(e.EmpID)}</span></td>
+        <td class="right">${e.count}</td><td class="right">${inr(e.total)}</td><td class="right pos">${inr(e.recovered)}</td>
+        <td class="right"><b class="${e.outstanding > 0 ? 'acc-t' : 'muted'}">${inr(e.outstanding)}</b></td>
+        <td>${esc(e.lastAdvance || '—')}</td><td>${esc(e.lastRecovery || '—')}</td></tr>`).join('') ||
+        '<tr><td colspan="7">' + emptyBox('No advances yet') + '</td></tr>'}</tbody></table></div></div>`;
+    $('#q', body).oninput = debounce(e => { f.q = e.target.value; viewAdvances(el); }, 250);
+    $('#exp', body).onclick = () => exportCSV('advances_by_employee', [['EmpID', 'Emp ID'], ['EmpName', 'Employee'], ['count', 'Times taken'],
+      ['total', 'Total taken'], ['recovered', 'Recovered'], ['outstanding', 'To recover'], ['lastAdvance', 'Last advance'], ['lastRecovery', 'Last recovery']], emps);
+    $$('[data-emp]', body).forEach(tr => tr.onclick = () => openEmpAdvance(tr.dataset.emp));
     return;
   }
 
@@ -971,10 +980,10 @@ async function viewAdvances(el) {
       <span class="spacer"></span><button class="btn btn-ghost" id="exp">Export CSV</button></div>
     <div class="table-card"><div class="tbl-wrap"><table class="tbl">
       <thead><tr><th>Advance</th><th>Date</th><th>Employee</th><th class="right">Amount</th><th class="right">Recovered</th><th class="right">Outstanding</th><th>Status</th><th>Given by</th></tr></thead>
-      <tbody>${r.rows.map(a => `<tr class="click" data-adv="${esc(a.AdvanceID)}"><td>${esc(a.AdvanceID)}</td><td>${esc(a.Date)}</td><td>${esc(a.EmpName)}</td>
+      <tbody>${r.rows.map(a => `<tr class="click" data-emp="${esc(a.EmpID)}"><td>${esc(a.AdvanceID)}</td><td>${esc(a.Date)}</td><td>${esc(a.EmpName)}</td>
         <td class="right">${inr(a.Amount)}</td><td class="right">${inr(a.Recovered)}</td><td class="right"><b>${inr(a.Outstanding)}</b></td>
         <td>${badge(a.Status)}</td><td>${esc(a.GivenBy)}</td></tr>`).join('') ||
-        '<tr><td colspan="8">' + emptyBox(f.empId ? 'No advances for ' + empName(f.empId) : 'No advances found') + '</td></tr>'}</tbody></table></div></div>${pager(r)}`;
+        '<tr><td colspan="8">' + emptyBox('No advances found') + '</td></tr>'}</tbody></table></div></div>${pager(r)}`;
   const reload = () => { f.page = 1; viewAdvances(el); };
   $('#q', body).oninput = debounce(e => { f.q = e.target.value; reload(); });
   $('#fEmp', body).onchange = e => { f.empId = e.target.value; reload(); };
@@ -984,66 +993,98 @@ async function viewAdvances(el) {
     if (x) exportCSV('advances', [['AdvanceID', 'Advance'], ['Date', 'Date'], ['EmpID', 'Emp ID'], ['EmpName', 'Employee'], ['Amount', 'Amount'],
       ['Recovered', 'Recovered'], ['Outstanding', 'Outstanding'], ['Status', 'Status'], ['GivenBy', 'Given By'], ['VoucherID', 'Cash Entry']], x.rows);
   };
-  $$('[data-adv]', body).forEach(tr => tr.onclick = () => openAdvance(tr.dataset.adv));
+  $$('[data-emp]', body).forEach(tr => tr.onclick = () => openEmpAdvance(tr.dataset.emp));
   bindPager(body, p => { f.page = p; viewAdvances(el); });
   }, el);
 }
 
-async function openAdvance(id) {
-  const box = openModal(`<div class="m-head"><div><div class="m-title">Loading…</div></div><button class="x" data-close>&times;</button></div>${skel(3)}`, true);
-  const r = await call('advanceDetail', { id });
+/* Employee advance khata: totals + every advance and recovery with running balance */
+function openEmpAdvance(empId, pre) {
+  const box = openModal(`<div class="m-head"><div><div class="m-title">Loading…</div></div><button class="x" data-close>&times;</button></div>${skel(4)}`, true);
+  if (pre) { memoSet('employeeAdvances', { empId }, pre); box._tok = (box._tok || 0) + 1; return renderEmpAdvance(box, pre, empId); }
+  load('employeeAdvances', { empId }, r => renderEmpAdvance(box, r, empId), box);
+}
+
+function renderEmpAdvance(box, r, empId) {
   if ($('#modal').classList.contains('hidden')) return;
-  if (!r || !r.ok) { box.innerHTML = `<div class="m-head"><div><div class="m-title">${esc(id)}</div></div><button class="x" data-close>&times;</button></div>${emptyBox('Could not load')}`; return; }
-  const a = r.advance, out = num(a.Outstanding);
+  if (!r || !r.ok) {
+    box.innerHTML = `<div class="m-head"><div><div class="m-title">Employee advance</div></div><button class="x" data-close>&times;</button></div>${emptyBox((r && r.message) || 'Could not load')}`;
+    return;
+  }
+  const t = r.totals, e = r.emp, mgr = isAdvMgr();
+  const line = x => x.type === 'Advance'
+    ? `<tr><td>${esc(x.date)}</td><td><span class="tx tx-adv">Advance given</span><div class="muted sm">${esc(x.ref)} · by ${esc(x.by)} · ${esc(x.note)}</div></td>
+         <td class="right">${inr(x.amount)}</td><td class="right"></td><td class="right"><b>${inr(x.balance)}</b></td>${mgr ? '<td></td>' : ''}</tr>`
+    : `<tr><td>${esc(x.date)}</td><td><span class="tx tx-rec">Recovered</span><div class="muted sm">${esc(x.mode)}${x.month ? ' · ' + esc(monthName(x.month)) : ''}${x.note ? ' · ' + esc(x.note) : ''} · by ${esc(x.by)}</div></td>
+         <td class="right"></td><td class="right pos">${inr(x.amount)}</td><td class="right"><b>${inr(x.balance)}</b></td>
+         ${mgr ? `<td class="right"><button class="icon-btn" title="Remove recovery" data-del="${esc(x.key)}">&times;</button></td>` : ''}</tr>`;
   box.innerHTML = `
-    <div class="m-head"><div><div class="m-title">${esc(a.EmpName)} · ${esc(a.AdvanceID)}</div>
-      <div class="muted sm">${esc(a.Date)} · Given by ${esc(a.GivenBy)} · Cash entry ${esc(a.VoucherID)}</div></div>${badge(a.Status)}<button class="x" data-close>&times;</button></div>
+    <div class="m-head"><div><div class="m-title">${esc(e.EmpName)}</div>
+      <div class="muted sm">${esc(e.EmpID)} · Advance khata</div></div>
+      ${t.outstanding > 0 ? badge(t.recovered > 0 ? 'Partly Recovered' : 'Outstanding') : badge('Recovered')}<button class="x" data-close>&times;</button></div>
     <div class="stat-row" style="grid-template-columns:repeat(3,1fr)">
-      <div class="stat"><span>Advance</span><b>${inr(a.Amount)}</b></div>
-      <div class="stat"><span>Recovered</span><b>${inr(a.Recovered)}</b></div>
-      <div class="stat"><span>Outstanding</span><b>${inr(out)}</b></div>
+      <div class="stat"><span>Total taken</span><b>${inr(t.taken)}</b><small class="muted sm">${t.times} time${t.times === 1 ? '' : 's'}</small></div>
+      <div class="stat"><span>Recovered</span><b class="pos">${inr(t.recovered)}</b><small class="muted sm">${t.recoveries} time${t.recoveries === 1 ? '' : 's'}</small></div>
+      <div class="stat hl"><span>To recover</span><b>${inr(t.outstanding)}</b><small class="muted sm">${t.outstanding > 0 ? 'still pending' : 'fully settled'}</small></div>
     </div>
-    <div class="m-section"><h4>Recoveries (${r.recoveries.length})</h4>
-      <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Mode</th><th>Salary month</th><th class="right">Amount</th><th>Remarks</th>${isAdvMgr() ? '<th></th>' : ''}</tr></thead>
-      <tbody>${r.recoveries.map(x => `<tr><td>${esc(x.Date)}</td><td>${esc(x.Mode)}</td><td>${esc(x.SalaryMonth)}</td><td class="right">${inr(x.Amount)}</td>
-        <td class="wrap">${esc(x.Remarks)}</td>${isAdvMgr() ? `<td class="right"><button class="icon-btn" title="Remove" data-del="${esc(x.RecoveryID)}">&times;</button></td>` : ''}</tr>`).join('') ||
-        `<tr><td colspan="6">${emptyBox('No recovery yet')}</td></tr>`}</tbody></table></div></div></div>
-    ${isAdvMgr() && out > 0 ? '<div class="m-actions" style="margin-top:20px"><button class="btn btn-primary btn-auto" data-add>+ Add Recovery</button></div>' : ''}`;
+    <div class="progress" style="margin-bottom:6px"><span style="width:${t.taken ? Math.min(100, t.recovered / t.taken * 100).toFixed(1) : 0}%"></span></div>
+    <div class="muted sm" style="text-align:right">${t.taken ? Math.round(t.recovered / t.taken * 100) : 0}% recovered</div>
+    <div class="m-section"><h4>History</h4>
+      <div class="table-card"><div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Date</th><th>Details</th><th class="right">Advance</th><th class="right">Recovered</th><th class="right">Balance</th>${mgr ? '<th></th>' : ''}</tr></thead>
+        <tbody>${r.entries.map(line).join('')}</tbody>
+        <tfoot><tr><td colspan="2">Total</td><td class="right">${inr(t.taken)}</td><td class="right">${inr(t.recovered)}</td><td class="right">${inr(t.outstanding)}</td>${mgr ? '<td></td>' : ''}</tr></tfoot>
+      </table></div></div></div>
+    <div class="m-actions" style="margin-top:18px">
+      <button class="btn btn-ghost" data-exp>Export CSV</button>
+      ${mgr && t.outstanding > 0 ? '<button class="btn btn-primary btn-auto" data-add>+ Add Recovery</button>' : ''}
+    </div>`;
+  $('[data-exp]', box).onclick = () => exportCSV('advance_' + e.EmpName.replace(/\s+/g, '_'),
+    [['date', 'Date'], ['type', 'Type'], ['ref', 'Ref'], ['mode', 'Mode'], ['month', 'Salary month'], ['note', 'Details'], ['by', 'By'], ['amount', 'Amount'], ['balance', 'Balance']], r.entries);
   const add = $('[data-add]', box);
-  if (add) add.onclick = () => formRecovery(a);
+  if (add) add.onclick = () => formEmpRecovery(e, t.outstanding);
   $$('[data-del]', box).forEach(b => b.onclick = async () => {
-    if (!(await confirmBox('Remove recovery', 'Outstanding will increase again. Continue?', 'Remove', true))) return;
-    if (await act(b, 'deleteRecovery', { id: b.dataset.del }, 'Recovery removed')) { refreshView(); openAdvance(id); }
+    if (!(await confirmBox('Remove recovery', 'This recovery will be removed and the balance will go up again. Continue?', 'Remove', true))) return;
+    const x = await act(b, 'deleteEmpRecovery', { empId, key: b.dataset.del }, 'Recovery removed');
+    if (x) { refreshView(); openEmpAdvance(empId, x.statement); }
   });
 }
 
-function formRecovery(a) {
-  const key = 'rec_' + a.AdvanceID, d = getDraft(key), ref = d.ClientRef || uid();
-  const out = num(a.Outstanding);
+function monthName(ym) {
+  const [y, m] = String(ym).split('-');
+  return y && m ? new Date(+y, +m - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : ym;
+}
+
+function formEmpRecovery(emp, out) {
+  const key = 'rec_' + emp.EmpID, d = getDraft(key), ref = d.ClientRef || uid();
   const box = openModal(`
-    <div class="m-head"><div><div class="m-title">Add Recovery</div><div class="muted sm">${esc(a.EmpName)} · Outstanding ${inr(out)}</div></div><button class="x" data-close>&times;</button></div>
+    <div class="m-head"><div><div class="m-title">Add Recovery</div><div class="muted sm">${esc(emp.EmpName)} · To recover ${inr(out)}</div></div><button class="x" data-close>&times;</button></div>
     <form class="form" novalidate>
       <label>Date<input class="input" type="date" name="Date" max="${today()}" value="${esc(d.Date || today())}" /></label>
-      <label>Amount (₹)<input class="input" type="number" name="Amount" inputmode="decimal" min="1" max="${out}" step="0.01" value="${esc(d.Amount || '')}" /></label>
+      <label>Amount (₹)<input class="input" type="number" name="Amount" inputmode="decimal" min="1" max="${out}" step="0.01" value="${esc(d.Amount || '')}" />
+        <span class="hint"><a href="#" data-full>Recover full ${inr(out)}</a></span></label>
       <label>Recovery mode<select class="input" name="Mode">${opts(S.cfg.RecoveryMode, d.Mode || S.cfg.RecoveryMode[0], 'Select mode')}</select></label>
       <label id="smWrap">Salary month<input class="input" type="month" name="SalaryMonth" value="${esc(d.SalaryMonth || today().slice(0, 7))}" /></label>
       <label class="full">Remarks<textarea class="input" name="Remarks" rows="2" maxlength="300">${esc(d.Remarks || '')}</textarea></label>
-      <div class="m-actions full"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn btn-primary btn-auto">Save Recovery</button></div>
+      <p class="hint full">Adjusted against the oldest advance first.</p>
+      <div class="m-actions full"><button type="button" class="btn btn-ghost" data-back>Back</button><button type="submit" class="btn btn-primary btn-auto">Save Recovery</button></div>
     </form>`);
   const form = $('form', box), mode = $('[name=Mode]', form);
   const syncMonth = () => $('#smWrap', box).classList.toggle('hidden', !/salary/i.test(mode.value));
   mode.onchange = syncMonth; syncMonth();
+  $('[data-full]', box).onclick = ev => { ev.preventDefault(); $('[name=Amount]', form).value = out; };
+  $('[data-back]', box).onclick = () => openEmpAdvance(emp.EmpID);
   trackDraft(form, key, ref);
-  form.onsubmit = async e => {
-    e.preventDefault();
-    const rec = formData(form); rec.AdvanceID = a.AdvanceID; rec.ClientRef = ref;
+  form.onsubmit = async ev => {
+    ev.preventDefault();
+    const rec = formData(form); rec.EmpID = emp.EmpID; rec.ClientRef = ref;
     if (!/salary/i.test(rec.Mode)) rec.SalaryMonth = '';
     const err = vDate(rec.Date) || vMoney(rec.Amount) || (num(rec.Amount) > out ? 'Amount cannot be more than ' + inr(out) : null) ||
       vReq(rec.Mode, 'Recovery mode') || (/salary/i.test(rec.Mode) ? vReq(rec.SalaryMonth, 'Salary month') : null);
     if (err) return toast(err, false);
-    const r = await submit(form, 'addRecovery', { record: JSON.stringify(rec) });
+    const r = await submit(form, 'addEmpRecovery', { record: JSON.stringify(rec) });
     if (!r) return;
-    clearDraft(key); toast('Recovery saved'); refreshView(); openAdvance(a.AdvanceID);
+    clearDraft(key); toast('Recovery saved'); refreshView(); openEmpAdvance(emp.EmpID, r.statement);
   };
 }
 
