@@ -14,15 +14,61 @@
 </head>
 <body>
   <!-- Login -->
-  <div id="loginView" class="login-wrap">
-    <div class="login-card fade-in">
-      <div class="logo">₹</div>
-      <h1 class="brand">Cash Ledger</h1>
-      <p class="muted">Litpax Technology · Enter your PIN</p>
-      <input id="pin" class="input pin-input" type="password" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="••••" />
-      <button id="loginBtn" class="btn btn-primary">Login</button>
-      <div id="loginErr" class="err"></div>
-    </div>
+  <div id="loginView" class="lg">
+    <section class="lg-hero">
+      <div class="lg-brand"><span class="logo sm">₹</span>Litpax <b>Cash Ledger</b></div>
+
+      <div class="lg-art" aria-hidden="true">
+        <div class="lg-card c-main">
+          <div class="lc-top">
+            <div><div class="lc-title">Diesel / Fuel</div><div class="lc-sub">V-00012 · Cash · 2 days</div></div>
+            <span class="lc-badge">Open</span>
+          </div>
+          <div class="lc-nums">
+            <div><span>Received</span><b>₹5,000</b></div>
+            <div><span>Spent</span><b>₹3,200</b></div>
+            <div><span>Balance</span><b class="acc">₹1,800</b></div>
+          </div>
+          <div class="lc-bar"><i></i></div>
+          <div class="lc-rows">
+            <div class="lc-row"><i class="d"></i><span>Fuel station — truck refill</span><b>₹2,400</b></div>
+            <div class="lc-row"><i class="d"></i><span>Toll &amp; parking</span><b>₹500</b></div>
+            <div class="lc-row"><i class="d dim"></i><span>Loading labour <em>No bill</em></span><b>₹300</b></div>
+          </div>
+        </div>
+        <div class="lg-card c-float c1"><span class="fi ok">✓</span><div><b>Owner confirmed</b><small>₹5,000 cash given</small></div></div>
+        <div class="lg-card c-float c2"><span class="fi">₹</span><div><b>Cash returned</b><small>₹1,800 · waiting for Owner</small></div></div>
+      </div>
+
+      <div class="lg-copy">
+        <div class="lg-kicker">Owner cash accountability</div>
+        <h1>Every rupee given, every rupee accounted.</h1>
+        <p>Cash received, expenses with bills, returns and employee advances, all in one place.</p>
+        <div class="lg-steps">
+          <span><i>1</i>Cash given</span><span><i>2</i>Owner confirms</span>
+          <span><i>3</i>Expenses &amp; bills</span><span><i>4</i>Settled</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="lg-side">
+      <div class="lg-box fade-in" id="lgBox">
+        <div class="logo">₹</div>
+        <div class="lg-title">Sign in</div>
+        <div class="lg-sub">Enter your PIN to continue</div>
+        <label class="lbl" for="pin">PIN</label>
+        <div class="ifield">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          <input id="pin" class="input" type="password" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="••••" />
+          <button type="button" class="eye" id="pinEye" aria-label="Show PIN"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        </div>
+        <div id="loginErr" class="err"></div>
+        <button id="loginBtn" class="btn btn-primary lg-btn"><span>Sign in</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 5l7 7-7 7M20 12H4"/></svg></button>
+        <div class="lg-roles"><span>Owner</span><span>Admin</span><span>HR</span><span>Employee</span></div>
+        <div class="lg-foot">One PIN per person · Access by role</div>
+      </div>
+      <div class="lg-copyr">© Litpax Technology Pvt. Ltd.</div>
+    </section>
   </div>
 
   <!-- App -->
