@@ -740,7 +740,7 @@ function formVoucher() {
 function formExpense(v, isAdvance) {
   const key = 'exp_' + v.VoucherID, d = getDraft(key);
   let ref = d.ClientRef || uid(), bal = num(v.Balance), up = null, more = false;
-  const empOpts = S.employees.map(e => `<option value="${esc(e.id)}" ${e.id === d.EmpID ? 'selected' : ''}>${esc(e.name)}${e.dept ? ' — ' + esc(e.dept) : ''}</option>`).join('');
+  const empOpts = S.employees.map(e => `<option value="${esc(e.id)}" ${e.id === d.EmpID ? 'selected' : ''}>${esc(e.name)}${e.id.indexOf('ROW-') ? ' · ' + esc(e.id) : ''}${e.dept ? ' — ' + esc(e.dept) : ''}</option>`).join('');
   const box = openModal(`
     <div class="m-head"><div><div class="m-title">${isAdvance ? 'Advance Given to Employee' : 'Add Expense'}</div>
       <div class="muted sm">${esc(v.VoucherID)} · ${esc(v.Purpose)} · Balance <b id="expBal">${inr(bal)}</b></div></div><button class="x" data-close>&times;</button></div>
