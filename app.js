@@ -265,7 +265,7 @@ function askText(title, label, required = true, okLabel = 'Submit') {
 async function doLogin() {
   const pin = $('#pin').value.trim();
   const err = $('#loginErr');
-  if (!/^\d{4,6}$/.test(pin)) { err.textContent = 'Enter your 4–6 digit PIN'; return; }
+  if (!/^\d{4}$/.test(pin)) { err.textContent = 'Enter your 4 digit PIN'; return; }
   const btn = $('#loginBtn'), label = btn.innerHTML;
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Checking…'; err.textContent = '';
   try {
@@ -292,7 +292,7 @@ function drawPin() {
   $$('#pinBoxes i').forEach((b, k) => {
     b.textContent = k < v.length && reveal ? v[k] : '';
     b.classList.toggle('f', k < v.length);
-    b.classList.toggle('on', focused && k === Math.min(v.length, 5));
+    b.classList.toggle('on', focused && k === Math.min(v.length, 3));
   });
 }
 
@@ -1120,7 +1120,7 @@ function formUser(u, roles) {
     <form class="form" novalidate>
       <label class="full">Name<input class="input" name="Name" maxlength="60" value="${esc(u0.Name)}" ${isNew ? '' : 'readonly'} />
         ${isNew ? '<span class="hint">Name cannot be changed later (it is used in the ledger).</span>' : ''}</label>
-      <label>PIN<input class="input" name="PIN" inputmode="numeric" maxlength="6" placeholder="${isNew ? '4–6 digits' : 'Leave blank to keep'}" /></label>
+      <label>PIN<input class="input" name="PIN" inputmode="numeric" maxlength="4" placeholder="${isNew ? '4 digits' : 'Leave blank to keep'}" /></label>
       <label>Role<select class="input" name="Role">${opts(roles || ROLES, u0.Role)}</select></label>
       ${isNew ? '' : `<label class="check full"><input type="checkbox" name="Active" ${u0.Active ? 'checked' : ''}/> Active (can log in)</label>`}
       <div class="m-actions full"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn btn-primary btn-auto">Save</button></div>
@@ -1130,7 +1130,7 @@ function formUser(u, roles) {
     e.preventDefault();
     const rec = formData(form); rec.isNew = isNew;
     if (isNew) rec.Active = true;
-    const err = vReq(rec.Name, 'Name') || (isNew ? vReq(rec.PIN, 'PIN') : null) || (rec.PIN && !/^\d{4,6}$/.test(rec.PIN) ? 'PIN must be 4–6 digits' : null);
+    const err = vReq(rec.Name, 'Name') || (isNew ? vReq(rec.PIN, 'PIN') : null) || (rec.PIN && !/^\d{4}$/.test(rec.PIN) ? 'PIN must be 4 digits' : null);
     if (err) return toast(err, false);
     const r = await submit(form, 'saveUser', { record: JSON.stringify(rec) });
     if (!r) return;
@@ -1200,10 +1200,10 @@ async function saveCfg(btn) {
 $('#loginBtn').onclick = doLogin;
 $('#pin').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 $('#pin').addEventListener('input', e => {
-  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4);
   $('#loginErr').textContent = '';
   drawPin();
-  if (e.target.value.length === 6) doLogin();              // 6 digits typed: sign in straight away
+  if (e.target.value.length === 4) doLogin();              // 4 digits typed: sign in straight away
 });
 ['focus', 'blur', 'keyup', 'click'].forEach(ev => $('#pin').addEventListener(ev, drawPin));
 $('#pinEye').onclick = () => {
