@@ -397,3 +397,17 @@ select.input { cursor: pointer; }
   body { background: #fff; }
   .card, .table-card, .kpi { box-shadow: none; }
 }
+
+/* ---------- Quick expense ---------- */
+.vc-foot { display: flex; justify-content: flex-end; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.pick-list { display: flex; flex-direction: column; gap: 8px; }
+.pick {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; text-align: left;
+  padding: 13px 15px; border: 1px solid var(--border); border-radius: 12px; background: #fff; font: inherit; cursor: pointer;
+  transition: border-color .2s, background .2s, transform .12s;
+}
+.pick:hover { border-color: var(--accent); background: var(--accent-soft); }
+.pick:active { transform: scale(.99); }
+.pick small { display: block; color: var(--muted); font-size: 12px; }
+.pick .right b { color: var(--accent); }
+.spinner.dark { border-color: rgba(99,91,255,.25); border-top-color: var(--accent); }
