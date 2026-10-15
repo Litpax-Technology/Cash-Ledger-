@@ -243,18 +243,24 @@ async function doLogin() {
   const pin = $('#pin').value.trim();
   const err = $('#loginErr');
   if (!/^\d{4,6}$/.test(pin)) { err.textContent = 'Enter your 4–6 digit PIN'; return; }
-  const btn = $('#loginBtn');
+  const btn = $('#loginBtn'), label = btn.innerHTML;
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Checking…'; err.textContent = '';
   try {
     const r = await jsonp('login', { pin });
-    if (!r.ok) { err.textContent = r.message || 'Login failed'; return; }
+    if (!r.ok) { err.textContent = r.message || 'Login failed'; shakeLogin(); return; }
     S.token = r.token; S.me = { name: r.name, role: r.role };
     store.set('session', { token: S.token, me: S.me });
     $('#pin').value = '';
     await startApp();
   } catch (e) {
     err.textContent = 'Could not connect. Check internet and try again.';
-  } finally { btn.disabled = false; btn.textContent = 'Login'; }
+  } finally { btn.disabled = false; btn.innerHTML = label; }
+}
+
+function shakeLogin() {
+  const box = $('#lgBox');
+  box.classList.remove('shake'); void box.offsetWidth; box.classList.add('shake');
+  $('#pin').select();
 }
 
 async function startApp() {
@@ -1067,6 +1073,13 @@ async function saveCfg(btn) {
 /* =========================== Wire up =========================== */
 $('#loginBtn').onclick = doLogin;
 $('#pin').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+$('#pin').addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g, ''); $('#loginErr').textContent = ''; });
+$('#pinEye').onclick = () => {
+  const i = $('#pin'), show = i.type === 'password';
+  i.type = show ? 'text' : 'password';
+  $('#pinEye').classList.toggle('on', show);
+  i.focus();
+};
 $('#logoutBtn').onclick = logout;
 $('#refreshBtn').onclick = () => { refreshView(); refreshBadge(); };
 document.addEventListener('click', e => { if (e.target.closest('[data-close]')) closeModal(); });
