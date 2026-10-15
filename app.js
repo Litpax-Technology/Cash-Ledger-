@@ -179,6 +179,7 @@ function avatar(name, size = '') {
 }
 const who = (name, sub) => `<span class="who-cell">${avatar(name, 'sm')}<span>${esc(name)}${sub ? ` <span class="muted sm">${esc(sub)}</span>` : ''}</span></span>`;
 const vTitle = v => (v.Purpose && v.Purpose !== 'General') ? v.Purpose : (v.Remarks ? String(v.Remarks).slice(0, 48) : 'Cash from Owner');
+const pid = name => (S.personIds || {})[name] || '';
 const firstName = n => String(n || '').trim().split(/\s+/)[0] || '';
 
 function helloCard(sub, actions) {
@@ -428,6 +429,7 @@ async function startApp(pre) {
 /* config + first screen data arrive together; seed the page cache with them */
 function applyStartup(r) {
   S.me = r.me; S.cfg = r.config; S.settings = r.settings; S.persons = r.persons; S.employees = r.employees;
+  S.personIds = r.personIds || {};
   if (r.dash) { memoSet('dashboard', {}, r.dash); setBadge(r.dash.kpi.pending); }
   if (r.mine) memoSet('listVouchers', { page: 1, status: '', mine: '1' }, r.mine);
 }
@@ -554,11 +556,11 @@ async function viewDashboard(el) {
       ${kpi('Spent this month', inr(k.spentMonth), k.noBill + ' expenses without bill', { go: 'expenses' })}
       ${kpi('Advance outstanding', inr(k.advOut), k.advEmp + ' employees', { go: 'advances' })}
     </div>
-    ${trendChart(r.trend)}
+    ${isOwner() ? '' : trendChart(r.trend)}
     <div class="grid2">
       <div class="card"><div class="card-h">Who holds how much <span class="muted">Open entries · click for ledger</span></div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Person</th><th class="right">Open</th><th class="right">Given</th><th class="right">Spent</th><th class="right">Balance</th><th class="right">Oldest</th></tr></thead>
-        <tbody>${r.persons.map(p => `<tr class="click" data-person="${esc(p.person)}"><td>${who(p.person)}${p.overdue ? ' <span class="badge b-rejected">' + p.overdue + ' overdue</span>' : ''}</td>
+        <tbody>${r.persons.map(p => `<tr class="click" data-person="${esc(p.person)}"><td>${who(p.person, p.empId)}${p.overdue ? ' <span class="badge b-rejected">' + p.overdue + ' overdue</span>' : ''}</td>
           <td class="right">${p.open}</td><td class="right">${inr(p.given)}</td><td class="right">${inr(p.spent)}</td>
           <td class="right"><b class="${p.balance < 0 ? 'neg' : ''}">${inr(p.balance)}</b></td><td class="right">${p.oldestDays}d</td></tr>`).join('') ||
           '<tr><td colspan="6">' + emptyBox('Nobody is holding cash right now') + '</td></tr>'}</tbody></table></div></div>
@@ -601,12 +603,12 @@ async function viewApprovals(el) {
     ${!canAct ? '<div class="note">Only the Owner can confirm or reject. You can view pending items here.</div>' : ''}
     <div class="card"><div class="card-h">Cash given — waiting for confirmation <span class="muted">${r.vouchers.length}</span></div>
       <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Person</th><th>Purpose</th><th class="right">Amount</th><th>Mode</th><th>Remarks</th><th></th></tr></thead>
-      <tbody>${r.vouchers.map(v => `<tr><td>${esc(v.Date)}</td><td>${who(v.Person)}</td><td>${esc(vTitle(v))}</td>
+      <tbody>${r.vouchers.map(v => `<tr><td>${esc(v.Date)}</td><td>${who(v.Person, v.PersonEmpID || pid(v.Person))}</td><td>${esc(vTitle(v))}</td>
         <td class="right"><b>${inr(v.Amount)}</b></td><td>${esc(v.Mode)}</td><td class="wrap">${esc(v.Remarks)}</td><td class="right">${btns('V', v.VoucherID)}</td></tr>`).join('') ||
         '<tr><td colspan="7">' + emptyBox('Nothing to confirm') + '</td></tr>'}</tbody></table></div></div>
     <div class="card"><div class="card-h">Cash returned — waiting for confirmation <span class="muted">${r.returns.length}</span></div>
       <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Person</th><th>Entry</th><th class="right">Amount</th><th>Mode</th><th>Remarks</th><th></th></tr></thead>
-      <tbody>${r.returns.map(x => `<tr><td>${esc(x.Date)}</td><td>${who(x.Person)}</td><td><a href="#" data-v="${esc(x.VoucherID)}">${esc(x.VoucherID)}</a> · ${esc(vTitle(x))}</td>
+      <tbody>${r.returns.map(x => `<tr><td>${esc(x.Date)}</td><td>${who(x.Person, x.PersonEmpID || pid(x.Person))}</td><td><a href="#" data-v="${esc(x.VoucherID)}">${esc(x.VoucherID)}</a> · ${esc(vTitle(x))}</td>
         <td class="right"><b>${inr(x.Amount)}</b></td><td>${esc(x.Mode)}</td><td class="wrap">${esc(x.Remarks)}</td><td class="right">${btns('R', x.ReturnID)}</td></tr>`).join('') ||
         '<tr><td colspan="7">' + emptyBox('Nothing to confirm') + '</td></tr>'}</tbody></table></div></div>`;
 
@@ -720,7 +722,7 @@ async function viewVouchers(el, params = {}) {
   const params2 = () => ({ q: f.q, status: f.status, person: f.person, purpose: f.purpose, overdue: f.overdue ? '1' : '' });
   $('#exp', el).onclick = async e => {
     const r = await act(e.target, 'listVouchers', Object.assign(params2(), { all: '1' }));
-    if (r) exportCSV('cash_entries', [['VoucherID', 'Entry'], ['Date', 'Date'], ['Person', 'Person'], ['Purpose', 'Purpose'], ['Amount', 'Amount'],
+    if (r) exportCSV('cash_entries', [['VoucherID', 'Entry'], ['Date', 'Date'], ['Person', 'Person'], ['PersonEmpID', 'Emp ID'], ['Purpose', 'Purpose'], ['Amount', 'Amount'],
       ['Mode', 'Mode'], ['Spent', 'Spent'], ['Returned', 'Returned'], ['Balance', 'Balance'], ['Status', 'Status'], ['Days', 'Days'],
       ['Remarks', 'Remarks'], ['ConfirmedBy', 'Confirmed By'], ['ClosedBy', 'Closed By'], ['CloseNote', 'Close Note']], r.rows);
   };
@@ -732,7 +734,7 @@ async function viewVouchers(el, params = {}) {
   body.innerHTML = `<div class="table-card"><div class="tbl-wrap"><table class="tbl">
     <thead><tr><th>Entry</th><th>Date</th><th>Person</th><th>Note</th><th class="right">Amount</th><th class="right">Spent</th>
       <th class="right">Returned</th><th class="right">Balance</th><th>Status</th></tr></thead>
-    <tbody>${r.rows.map(v => `<tr class="click" data-v="${esc(v.VoucherID)}"><td>${esc(v.VoucherID)}</td><td>${esc(v.Date)}</td><td>${who(v.Person)}</td>
+    <tbody>${r.rows.map(v => `<tr class="click" data-v="${esc(v.VoucherID)}"><td>${esc(v.VoucherID)}</td><td>${esc(v.Date)}</td><td>${who(v.Person, v.PersonEmpID || pid(v.Person))}</td>
       <td>${esc(vTitle(v))}</td><td class="right">${inr(v.Amount)}</td><td class="right">${inr(v.Spent)}</td><td class="right">${inr(v.Returned)}</td>
       <td class="right"><b class="${num(v.Balance) < 0 ? 'neg' : ''}">${inr(v.Balance)}</b></td><td>${badge(v.Status, v.Overdue)}</td></tr>`).join('') ||
       '<tr><td colspan="9">' + emptyBox('No entries found') + '</td></tr>'}</tbody></table></div></div>${pager(r)}`;
@@ -769,7 +771,7 @@ function renderVoucher(box, r, id) {
 
   box.innerHTML = `
     <div class="m-head"><div><div class="m-title">${esc(vTitle(v))} · ${esc(v.VoucherID)}</div>
-      <div class="muted sm">${esc(v.Person)} · ${esc(v.Date)} · ${esc(v.Mode)} · ${v.Days} day${v.Days === 1 ? '' : 's'} old</div></div>
+      <div class="muted sm">${esc(v.Person)}${(v.PersonEmpID || pid(v.Person)) ? ' (' + esc(v.PersonEmpID || pid(v.Person)) + ')' : ''} · ${esc(v.Date)} · ${esc(v.Mode)} · ${v.Days} day${v.Days === 1 ? '' : 's'} old</div></div>
       ${badge(v.Status, v.Overdue)}<button class="x" data-close>&times;</button></div>
     <div class="stat-row">
       <div class="stat"><span>Received</span><b>${inr(v.Amount)}</b></div>
@@ -1006,7 +1008,7 @@ async function viewExpenses(el) {
   const p = () => ({ q: f.q, person: f.person, purpose: f.purpose, from: f.from, to: f.to, noBill: f.noBill ? '1' : '' });
   $('#exp', el).onclick = async e => {
     const r = await act(e.target, 'listExpenses', Object.assign(p(), { all: '1' }));
-    if (r) exportCSV('expenses', [['ExpenseID', 'Expense'], ['VoucherID', 'Entry'], ['Date', 'Date'], ['Person', 'Person'], ['Purpose', 'Purpose'],
+    if (r) exportCSV('expenses', [['ExpenseID', 'Expense'], ['VoucherID', 'Entry'], ['Date', 'Date'], ['Person', 'Person'], ['PersonEmpID', 'Emp ID'], ['Purpose', 'Purpose'],
       ['PaidTo', 'Paid To'], ['Description', 'Description'], ['Amount', 'Amount'], ['BillURL', 'Bill'], ['EmpName', 'Employee (advance)']], r.rows);
   };
 
@@ -1016,7 +1018,7 @@ async function viewExpenses(el) {
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
   body.innerHTML = `<div class="table-card"><div class="tbl-wrap"><table class="tbl">
     <thead><tr><th>Date</th><th>Person</th><th>Purpose</th><th>Paid to</th><th>Description</th><th class="right">Amount</th><th>Bill</th><th>Entry</th></tr></thead>
-    <tbody>${r.rows.map(e => `<tr><td>${esc(e.Date)}</td><td>${who(e.Person)}</td><td>${esc(e.Purpose)}</td><td>${esc(e.PaidTo)}</td>
+    <tbody>${r.rows.map(e => `<tr><td>${esc(e.Date)}</td><td>${who(e.Person, e.PersonEmpID || pid(e.Person))}</td><td>${esc(e.Purpose)}</td><td>${esc(e.PaidTo)}</td>
       <td class="wrap">${esc(e.Description)}</td><td class="right">${inr(e.Amount)}</td><td>${billLink(e.BillURL)}</td>
       <td><a href="#" data-v="${esc(e.VoucherID)}">${esc(e.VoucherID)}</a></td></tr>`).join('') ||
       '<tr><td colspan="8">' + emptyBox('No expenses found') + '</td></tr>'}</tbody>
@@ -1033,7 +1035,7 @@ async function viewLedger(el, params = {}) {
   if (params.person) { f.person = params.person; S.params = {}; }
   if (!isMgr()) f.person = S.me.name;
   el.innerHTML = `<div class="toolbar">
-      ${isMgr() ? `<select class="input" id="fPerson">${opts(S.persons, f.person, 'Select person')}</select>` : `<b>${esc(S.me.name)}</b>`}
+      ${isMgr() ? `<select class="input" id="fPerson"><option value="">Select person</option>${S.persons.map(n => `<option value="${esc(n)}" ${n === f.person ? 'selected' : ''}>${esc(n)}${pid(n) ? ' · ' + esc(pid(n)) : ''}</option>`).join('')}</select>` : `<b>${esc(S.me.name)}</b>`}
       <input class="input" type="date" id="fFrom" value="${esc(f.from)}" />
       <input class="input" type="date" id="fTo" value="${esc(f.to)}" />
       <span class="spacer"></span>
@@ -1281,8 +1283,10 @@ async function settingsUsers(body) {
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
   body.innerHTML = `<div class="toolbar"><span class="muted">Every person who takes cash from the Owner needs a user with a PIN.</span>
       <span class="spacer"></span><button class="btn btn-primary btn-auto" id="add">+ Add User</button></div>
-    <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Role</th><th>Status</th></tr></thead>
-    <tbody>${r.rows.map((u, i) => `<tr class="click" data-i="${i}"><td>${esc(u.Name)}</td><td>${esc(u.Role)}</td><td>${badge(u.Active ? 'Active' : 'Inactive')}</td></tr>`).join('')}</tbody>
+    <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Emp ID</th><th>Role</th><th>Status</th></tr></thead>
+    <tbody>${r.rows.map((u, i) => `<tr class="click" data-i="${i}"><td>${who(u.Name)}</td>
+      <td>${u.EmpID ? esc(u.EmpID) : (EMP_ROLES.includes(u.Role) ? '<span class="badge b-rejected">Not linked</span>' : '<span class="muted">—</span>')}</td>
+      <td>${esc(u.Role)}</td><td>${badge(u.Active ? 'Active' : 'Inactive')}</td></tr>`).join('')}</tbody>
     </table></div></div>
     <div class="note" style="margin-top:14px"><b>Roles:</b> Owner — confirms cash and sees everything ·
       Admin — sees everything, manages settings · HR — takes cash, manages employee advances ·
@@ -1291,30 +1295,46 @@ async function settingsUsers(body) {
   $$('[data-i]', body).forEach(tr => tr.onclick = () => formUser(r.rows[tr.dataset.i], r.roles));
 }
 
+const EMP_ROLES = ['HR', 'Employee'];   // must be linked to the Employee Master
+
 function formUser(u, roles) {
-  const isNew = !u, u0 = u || { Name: '', Role: 'Employee', Active: true };
+  const isNew = !u, u0 = u || { Name: '', Role: 'Employee', Active: true, EmpID: '' };
+  const empOpts = S.employees.map(e => `<option value="${esc(e.id)}" ${e.id === u0.EmpID ? 'selected' : ''}>${esc(e.name)} · ${esc(e.id)}${e.dept ? ' — ' + esc(e.dept) : ''}</option>`).join('');
   const box = openModal(`
-    <div class="m-head"><div><div class="m-title">${isNew ? 'Add User' : 'Edit User'}</div></div><button class="x" data-close>&times;</button></div>
+    <div class="m-head"><div><div class="m-title">${isNew ? 'Add User' : 'Edit User'}</div>${isNew ? '' : `<div class="muted sm">${esc(u0.Name)}</div>`}</div><button class="x" data-close>&times;</button></div>
     <form class="form" novalidate>
-      <label class="full">Name<input class="input" name="Name" maxlength="60" value="${esc(u0.Name)}" ${isNew ? '' : 'readonly'} />
-        ${isNew ? '<span class="hint">Name cannot be changed later (it is used in the ledger).</span>' : ''}</label>
-      <label>PIN<input class="input" name="PIN" inputmode="numeric" maxlength="4" placeholder="${isNew ? '4 digits' : 'Leave blank to keep'}" /></label>
-      <label>Role<select class="input" name="Role">${opts(roles || ROLES, u0.Role)}</select></label>
+      <label class="full">Role<select class="input" name="Role">${opts(roles || ROLES, u0.Role)}</select></label>
+      <label class="full" id="empRow">Employee <span class="muted sm">(from Employee Master)</span>
+        <select class="input" name="EmpID"><option value="">Select employee</option>${empOpts}</select>
+        <span class="hint">${isNew ? 'Name and Emp ID are taken from the Employee Master.' : 'Links this user to the employee; old entries get the Emp ID too.'}</span></label>
+      <label class="full" id="nameRow">Name<input class="input" name="Name" maxlength="60" value="${esc(u0.Name)}" ${isNew ? '' : 'readonly'} />
+        ${isNew ? '<span class="hint">Owner / Admin are not in the Employee Master — just type the name.</span>' : ''}</label>
+      <label class="full">PIN<input class="input" name="PIN" inputmode="numeric" maxlength="4" placeholder="${isNew ? '4 digits' : 'Leave blank to keep'}" /></label>
       ${isNew ? '' : `<label class="check full"><input type="checkbox" name="Active" ${u0.Active ? 'checked' : ''}/> Active (can log in)</label>`}
       <div class="m-actions full"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn btn-primary btn-auto">Save</button></div>
     </form>`);
-  const form = $('form', box);
+  const form = $('form', box), roleSel = $('[name=Role]', form);
+  const needsEmp = () => EMP_ROLES.includes(roleSel.value);
+  const sync = () => {
+    $('#empRow', box).classList.toggle('hidden', !needsEmp());
+    $('#nameRow', box).classList.toggle('hidden', isNew && needsEmp());
+  };
+  roleSel.onchange = sync; sync();
   form.onsubmit = async e => {
     e.preventDefault();
     const rec = formData(form); rec.isNew = isNew;
     if (isNew) rec.Active = true;
-    const err = vReq(rec.Name, 'Name') || (isNew ? vReq(rec.PIN, 'PIN') : null) || (rec.PIN && !/^\d{4}$/.test(rec.PIN) ? 'PIN must be 4 digits' : null);
+    if (!needsEmp()) rec.EmpID = '';
+    else if (isNew) rec.Name = '';
+    if (!isNew) rec.Name = u0.Name;
+    const err = (needsEmp() ? vReq(rec.EmpID, 'Employee') : vReq(rec.Name, 'Name')) ||
+      (isNew ? vReq(rec.PIN, 'PIN') : null) || (rec.PIN && !/^\d{4}$/.test(rec.PIN) ? 'PIN must be 4 digits' : null);
     if (err) return toast(err, false);
     const r = await submit(form, 'saveUser', { record: JSON.stringify(rec) });
     if (!r) return;
     closeModal(); toast('User saved');
     const b = await call('bootstrap', {}, true);
-    if (b && b.ok) S.persons = b.persons;
+    if (b && b.ok) { S.persons = b.persons; S.personIds = b.personIds || {}; }
     refreshView();
   };
 }
