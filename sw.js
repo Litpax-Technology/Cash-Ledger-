@@ -1,5 +1,5 @@
 // Cash Ledger service worker — bump CACHE when you deploy new files
-const CACHE = 'cash-ledger-v3';
+const CACHE = 'cash-ledger-v4';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'icon.svg'];
 
 self.addEventListener('install', e => {
