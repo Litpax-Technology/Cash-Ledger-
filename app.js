@@ -283,7 +283,34 @@ async function doLogin() {
 function shakeLogin() {
   const box = $('#lgBox');
   box.classList.remove('shake'); void box.offsetWidth; box.classList.add('shake');
-  $('#pin').select();
+  $('#pin').value = ''; $('#pin').focus(); drawPin();
+}
+
+/* OTP-style PIN boxes mirror the hidden input */
+function drawPin() {
+  const i = $('#pin'), v = i.value, reveal = i.dataset.reveal === '1', focused = document.activeElement === i;
+  $$('#pinBoxes i').forEach((b, k) => {
+    b.textContent = k < v.length && reveal ? v[k] : '';
+    b.classList.toggle('f', k < v.length);
+    b.classList.toggle('on', focused && k === Math.min(v.length, 5));
+  });
+}
+
+/* login screen niceties: greeting by time of day + hero numbers counting up */
+function initLoginScreen() {
+  const h = new Date().getHours();
+  $('#lgHello').textContent = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+  drawPin();
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  $$('[data-count]').forEach(el => {
+    const to = Number(el.dataset.count), t0 = performance.now(), dur = 1400;
+    const tick = t => {
+      const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      el.textContent = inr(Math.round(to * e));
+      if (k < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
 }
 
 async function startApp(pre) {
@@ -320,6 +347,7 @@ function enterApp() {
 function showLogin() {
   $('#appView').classList.add('hidden');
   $('#loginView').classList.remove('hidden');
+  initLoginScreen();
   setTimeout(() => $('#pin').focus(), 50);
 }
 
@@ -344,10 +372,23 @@ const NAV = [
   { id: 'settings', label: 'Settings', roles: ['Admin'], render: viewSettings }
 ];
 
+const ICONS = {
+  dashboard: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+  approvals: '<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',
+  mycash: '<path d="M3 7a2 2 0 0 1 2-2h13v4"/><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M16 13.5h2"/>',
+  vouchers: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
+  expenses: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>',
+  ledger: '<path d="M4 4h11a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z"/><path d="M4 17a3 3 0 0 1 3-3h11"/>',
+  advances: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M17 11h5M19.5 8.5v5"/>',
+  employees: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2.5"/><path d="M5.5 16.5c.6-1.6 2-2.5 3.5-2.5s2.9.9 3.5 2.5M15 10h3M15 14h3"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'
+};
+
 function buildNav() {
   $('#nav').innerHTML = NAV.filter(n => n.roles.includes(role()))
-    .map(n => `<a class="nav-item" data-id="${n.id}">${n.label}${n.id === 'approvals' ? '<span class="count hidden" id="apprCount"></span>' : ''}</a>`).join('');
+    .map(n => `<a class="nav-item" data-id="${n.id}"><span class="ni"><svg viewBox="0 0 24 24">${ICONS[n.id] || ''}</svg>${n.label}</span>${n.id === 'approvals' ? '<span class="count hidden" id="apprCount"></span>' : ''}</a>`).join('');
   $$('.nav-item').forEach(a => a.onclick = () => go(a.dataset.id));
+  $('#todayTxt').textContent = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 function go(id, params = {}) {
@@ -380,7 +421,7 @@ async function refreshBadge() {
 /* =========================== Dashboard =========================== */
 async function viewDashboard(el) {
   el.innerHTML = `<div class="kpis">${skel(1).repeat(4)}</div>${skel(6)}`;
-  load('dashboard', r => {
+  load('dashboard', {}, r => {
   if (!r || !r.ok) { el.innerHTML = errBox(); return bindRetry(el); }
   setBadge(r.kpi.pending);
   const k = r.kpi;
@@ -428,7 +469,7 @@ async function viewDashboard(el) {
 /* =========================== Approvals =========================== */
 async function viewApprovals(el) {
   el.innerHTML = skel(5);
-  load('approvals', r => {
+  load('approvals', {}, r => {
   if (!r || !r.ok) { el.innerHTML = errBox(); return bindRetry(el); }
   setBadge(r.count);
   const canAct = isOwner();
@@ -1158,12 +1199,18 @@ async function saveCfg(btn) {
 /* =========================== Wire up =========================== */
 $('#loginBtn').onclick = doLogin;
 $('#pin').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
-$('#pin').addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g, ''); $('#loginErr').textContent = ''; });
+$('#pin').addEventListener('input', e => {
+  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+  $('#loginErr').textContent = '';
+  drawPin();
+  if (e.target.value.length === 6) doLogin();              // 6 digits typed: sign in straight away
+});
+['focus', 'blur', 'keyup', 'click'].forEach(ev => $('#pin').addEventListener(ev, drawPin));
 $('#pinEye').onclick = () => {
-  const i = $('#pin'), show = i.type === 'password';
-  i.type = show ? 'text' : 'password';
+  const i = $('#pin'), show = i.dataset.reveal !== '1';
+  i.dataset.reveal = show ? '1' : '';
   $('#pinEye').classList.toggle('on', show);
-  i.focus();
+  i.focus(); drawPin();
 };
 $('#logoutBtn').onclick = logout;
 $('#refreshBtn').onclick = () => { markStale(); refreshView(); refreshBadge(); };
