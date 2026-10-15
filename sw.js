@@ -1,7 +1,6 @@
 // Cash Ledger service worker — bump CACHE when you deploy new files
-const CACHE = 'cash-ledger-v6';
-const FILES = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'icon.svg',
-  'assets/litpax-logo-light.png', 'assets/litpax-logo-dark.png', 'assets/favicon.png'];
+const CACHE = 'cash-ledger-v7';
+const FILES = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
