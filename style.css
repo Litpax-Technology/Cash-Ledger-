@@ -163,7 +163,7 @@ a:hover { text-decoration: underline; }
 
 /* PIN boxes (real input sits on top, invisible) */
 .pinwrap { position: relative; display: flex; align-items: center; gap: 10px; }
-.pinboxes { flex: 1; display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+.pinboxes { flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .pinboxes i {
   height: 54px; border-radius: 12px; border: 1.5px solid var(--border); background: #fafafe; display: grid; place-items: center;
   font-style: normal; font-size: 22px; font-weight: 600; color: var(--text); transition: border-color .15s, box-shadow .15s, background .15s, transform .15s;
@@ -497,3 +497,12 @@ select.input { cursor: pointer; }
 .tb-title { flex: 1; min-width: 0; }
 .tb-date { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
 @media (max-width: 720px) { .nav-item.active { box-shadow: inset 0 -2px 0 #8b84ff; } .tb-date { display: none; } }
+
+/* ---------- Employee advance khata ---------- */
+.tx { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 20px; }
+.tx-adv { background: var(--accent-soft); color: var(--accent-dark); }
+.tx-rec { background: var(--ok-soft); color: var(--ok); }
+.stat small { display: block; margin-top: 2px; }
+.stat.hl { border-color: #c9c6ff; background: linear-gradient(180deg, #fff, var(--accent-soft)); }
+.stat.hl b { color: var(--accent); }
+.acc-t { color: var(--accent); }
