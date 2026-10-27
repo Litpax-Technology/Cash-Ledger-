@@ -169,8 +169,8 @@ function kpi(label, value, sub, opts = {}) {
 const skel = (n = 5) => '<div class="skeleton"></div>'.repeat(n);
 const emptyBox = msg => `<div class="empty"><svg class="empty-ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="8" y="12" width="32" height="26" rx="5"/><path d="M8 26h9l3 4h8l3-4h9"/><path d="M18 6l2 4M30 6l-2 4M24 4v5"/></svg><div>${esc(msg)}</div></div>`;
 
-/* person avatar: initials on an indigo tint picked from the name (single accent family) */
-const AV_TINTS = ['#635bff', '#4b45d6', '#7c74ff', '#3730a3', '#8b84ff', '#5048e5'];
+/* person avatar: initials on a navy/blue tint picked from the name (single accent family) */
+const AV_TINTS = ['#0b1f3a', '#1d4ed8', '#1e3a8a', '#13294d', '#2563eb', '#1e40af'];
 function avatar(name, size = '') {
   const n = String(name || '?').trim();
   const ini = n.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
@@ -208,7 +208,7 @@ function animateNums(root, key) {
 }
 
 /* ---- 30-day trend: two lines (Given / Spent), crosshair + tooltip ---- */
-const TREND = { W: 760, H: 230, l: 54, r: 14, t: 14, b: 30, given: '#635bff', spent: '#c2760a' };
+const TREND = { W: 760, H: 230, l: 54, r: 14, t: 14, b: 30, given: '#0b1f3a', spent: '#7aa7ff' };
 function niceMax(v) {
   const p = Math.pow(10, Math.floor(Math.log10(v || 1)));
   for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p;
