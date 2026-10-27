@@ -1356,16 +1356,28 @@ async function settingsUsers(body) {
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
   body.innerHTML = `<div class="toolbar"><span class="muted">Every person who takes cash from the Owner needs a user with a PIN.</span>
       <span class="spacer"></span><button class="btn btn-primary btn-auto" id="add">+ Add User</button></div>
-    <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Emp ID</th><th>Role</th><th>Status</th></tr></thead>
+    <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Emp ID</th><th>Role</th><th>PIN</th><th>Status</th></tr></thead>
     <tbody>${r.rows.map((u, i) => `<tr class="click" data-i="${i}"><td>${who(u.Name)}</td>
       <td>${u.EmpID ? esc(u.EmpID) : (EMP_ROLES.includes(u.Role) ? '<span class="badge b-rejected">Not linked</span>' : '<span class="muted">—</span>')}</td>
-      <td>${esc(u.Role)}</td><td>${badge(u.Active ? 'Active' : 'Inactive')}</td></tr>`).join('')}</tbody>
+      <td>${esc(u.Role)}</td><td>${u.HasPin
+        ? `<span class="pin-cell"><b data-pinv>••••</b><button class="icon-btn pin-eye" title="PIN dekho" aria-label="Show PIN of ${esc(u.Name)}" data-pin="${esc(u.Name)}"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></span>`
+        : '<span class="muted sm">Agle login pe</span>'}</td><td>${badge(u.Active ? 'Active' : 'Inactive')}</td></tr>`).join('')}</tbody>
     </table></div></div>
     <div class="note" style="margin-top:14px"><b>Roles:</b> Owner — confirms cash and sees everything ·
       Admin — sees everything, manages settings · HR — takes cash, manages employee advances ·
       Employee — takes cash and records expenses.</div>`;
   $('#add', body).onclick = () => formUser(null, r.roles);
   $$('[data-i]', body).forEach(tr => tr.onclick = () => formUser(r.rows[tr.dataset.i], r.roles));
+  // Admin: show a PIN for 15 s (each look is logged on the server)
+  $$('[data-pin]', body).forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    const cell = b.closest('.pin-cell'), v = $('[data-pinv]', cell);
+    if (cell.classList.contains('on')) { v.textContent = '••••'; cell.classList.remove('on'); clearTimeout(cell._t); return; }
+    const x = await act(b, 'revealPin', { name: b.dataset.pin });
+    if (!x) return;
+    v.textContent = x.pin; cell.classList.add('on');
+    cell._t = setTimeout(() => { v.textContent = '••••'; cell.classList.remove('on'); }, 15000);
+  });
 }
 
 const EMP_ROLES = ['HR', 'Employee'];   // must be linked to the Employee Master
