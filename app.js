@@ -580,8 +580,11 @@ async function viewDashboard(el) {
           <td class="right"><b class="${p.balance < 0 ? 'neg' : ''}">${inr(p.balance)}</b></td><td class="right">${p.oldestDays}d</td></tr>`).join('') ||
           '<tr><td colspan="6">' + emptyBox('Nobody is holding cash right now') + '</td></tr>'}</tbody></table></div></div>
       <div class="card"><div class="card-h">Spend by purpose <span class="muted">${esc(r.month)}</span></div>
-        <div class="card-b">${r.byPurpose.map(p => `<div class="bar-row"><span class="lbl">${esc(p.purpose)}</span>
-          <div class="bar"><span style="width:${(p.amount / maxP * 100).toFixed(1)}%"></span></div><b class="right">${inr(p.amount)}</b></div>`).join('') ||
+        <div class="card-b">${r.byPurpose.map((p, k) => { const hs = p.subs && p.subs.length; return `<div class="bar-row ${hs ? 'has-sub' : ''}" ${hs ? `data-pp="${k}" role="button" tabindex="0" aria-expanded="false" title="Breakdown dekho"` : ''}>
+          <span class="lbl">${hs ? '<i class="chev" aria-hidden="true">›</i>' : ''}${esc(p.purpose)}</span>
+          <div class="bar"><span style="width:${(p.amount / maxP * 100).toFixed(1)}%"></span></div><b class="right">${inr(p.amount)}</b></div>
+          ${hs ? `<div class="sub-bars hidden" data-ppsub="${k}">${p.subs.map(s => `<div class="bar-row sub"><span class="lbl">${esc(s.sub)}</span>
+            <div class="bar"><span style="width:${(s.amount / p.amount * 100).toFixed(1)}%"></span></div><b class="right">${inr(s.amount)}</b></div>`).join('')}</div>` : ''}`; }).join('') ||
           emptyBox('No expenses this month')}</div></div>
     </div>
     <div class="grid2" style="margin-top:18px">
@@ -601,6 +604,11 @@ async function viewDashboard(el) {
   $$('[data-nav]', el).forEach(b => b.onclick = e => { e.preventDefault(); go(b.dataset.nav); });
   animateNums(el, 'dash');
   $$('[data-v]', el).forEach(tr => tr.onclick = () => openVoucher(tr.dataset.v));
+  $$('[data-pp]', el).forEach(row => {
+    const toggle = () => { const s = $(`[data-ppsub="${row.dataset.pp}"]`, el), open = s.classList.toggle('hidden') === false;
+      row.classList.toggle('open', open); row.setAttribute('aria-expanded', open); };
+    row.onclick = toggle; row.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } };
+  });
   waitingList($('#wlist', el));
   }, el);
 }
@@ -861,7 +869,7 @@ function renderVoucher(box, r, id) {
     <div class="m-section"><h4>Expenses (${r.expenses.length})</h4>
       <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Purpose</th><th>Paid to</th><th>Description</th>
         <th class="right">Amount</th><th>Bill</th>${canDelExp ? '<th></th>' : ''}</tr></thead>
-      <tbody>${r.expenses.map(e => `<tr><td>${esc(e.Date)}</td><td><span class="tx ${e.AdvanceID ? 'tx-adv' : 'tx-pur'}">${esc(e.Purpose)}</span></td><td>${esc(e.PaidTo)}${e.AdvanceID ? ` <span class="muted sm">${esc(e.AdvanceID)}</span>` : ''}</td>
+      <tbody>${r.expenses.map(e => `<tr><td>${esc(e.Date)}</td><td><span class="tx ${e.AdvanceID ? 'tx-adv' : 'tx-pur'}">${esc(e.Purpose)}${e.SubPurpose ? ' › ' + esc(e.SubPurpose) : ''}</span></td><td>${esc(e.PaidTo)}${e.AdvanceID ? ` <span class="muted sm">${esc(e.AdvanceID)}</span>` : ''}</td>
         <td class="wrap">${esc(e.Description)}</td><td class="right">${inr(e.Amount)}</td><td>${billLink(e.BillURL)}</td>
         ${canDelExp ? `<td class="right"><button class="icon-btn" title="Remove" data-del="${esc(e.ExpenseID)}">&times;</button></td>` : ''}</tr>`).join('') ||
         `<tr><td colspan="7">${emptyBox('No expenses added yet')}</td></tr>`}</tbody></table></div></div></div>
@@ -955,6 +963,7 @@ function formExpense(v) {
       <label>Date<input class="input" type="date" name="Date" max="${today()}" value="${esc(d.Date || today())}" /></label>
       <label>Amount (₹)<input class="input" type="number" name="Amount" inputmode="decimal" min="1" step="0.01" value="${esc(d.Amount || '')}" placeholder="0" /></label>
       <label class="full">Purpose<select class="input" name="Purpose">${opts(purposes, d.Purpose, 'Select purpose')}</select></label>
+      <label class="full hidden" id="subWrap">Sub-category<select class="input" name="SubPurpose"></select></label>
       <label class="full" id="empWrap">Employee<select class="input" name="EmpID"><option value="">Select employee</option>${empOpts}</select>
         ${S.employees.length ? '<span class="hint">This amount will be added to the employee\'s advance khata.</span>' : '<span class="hint">No employees found in the Employee Master.</span>'}</label>
       <label class="full" id="paidWrap">Paid to<input class="input" name="PaidTo" maxlength="120" value="${esc(d.PaidTo || '')}" placeholder="Vendor / shop / person" /></label>
@@ -965,7 +974,13 @@ function formExpense(v) {
         <button type="submit" class="btn btn-primary btn-auto">Save</button></div>
     </form>`);
   const isAdv = () => $('[name=Purpose]', box).value === adv;
-  const syncPurpose = () => { $('#empWrap', box).classList.toggle('hidden', !isAdv()); $('#paidWrap', box).classList.toggle('hidden', isAdv()); };
+  const subsOf = p => (S.cfg.SubPurpose || {})[p] || [];
+  const syncPurpose = () => {
+    $('#empWrap', box).classList.toggle('hidden', !isAdv()); $('#paidWrap', box).classList.toggle('hidden', isAdv());
+    const list = isAdv() ? [] : subsOf($('[name=Purpose]', box).value), sel = $('[name=SubPurpose]', box), keep = sel.value || d.SubPurpose;
+    sel.innerHTML = opts(list, list.includes(keep) ? keep : '', 'Select sub-category');
+    $('#subWrap', box).classList.toggle('hidden', !list.length);
+  };
   $('[name=Purpose]', box).addEventListener('change', syncPurpose); syncPurpose();
   const form = $('form', box), fileIn = $('input[type=file]', box), pick = $('#pick', box), pickTxt = $('#pickTxt', box);
   trackDraft(form, key, () => ref);
@@ -998,7 +1013,10 @@ function formExpense(v) {
     const rec = formData(form); rec.VoucherID = v.VoucherID; rec.ClientRef = ref;
     const advance = rec.Purpose === adv;
     if (advance) rec.PaidTo = ''; else rec.EmpID = '';
-    const err = vDate(rec.Date) || vMoney(rec.Amount) || vReq(rec.Purpose, 'Purpose') || (advance ? vReq(rec.EmpID, 'Employee') : vReq(rec.PaidTo, 'Paid to'));
+    const needSub = !advance && subsOf(rec.Purpose).length > 0;
+    if (!needSub) rec.SubPurpose = '';
+    const err = vDate(rec.Date) || vMoney(rec.Amount) || vReq(rec.Purpose, 'Purpose') || (needSub ? vReq(rec.SubPurpose, 'Sub-category') : null) ||
+      (advance ? vReq(rec.EmpID, 'Employee') : vReq(rec.PaidTo, 'Paid to'));
     if (err) return toast(err, false);
     if (num(rec.Amount) > bal) {
       const ok = await confirmBox('More than balance', `This is ${inr(num(rec.Amount) - bal)} more than your balance. The extra will show as payable by the Owner. Continue?`, 'Continue');
@@ -1066,6 +1084,7 @@ async function viewExpenses(el) {
       <input class="input search" id="q" placeholder="Search paid to, description…" value="${esc(f.q)}" />
       <select class="input" id="fPerson">${opts(S.persons, f.person, 'All persons')}</select>
       <select class="input" id="fPurpose">${opts(S.cfg.Purpose, f.purpose, 'All purposes')}</select>
+      ${((S.cfg.SubPurpose || {})[f.purpose] || []).length ? `<select class="input" id="fSub">${opts(S.cfg.SubPurpose[f.purpose].concat('Not set'), f.sub || '', 'All sub-categories')}</select>` : ''}
       <input class="input" type="date" id="fFrom" value="${esc(f.from)}" />
       <input class="input" type="date" id="fTo" value="${esc(f.to)}" />
       <label class="check"><input type="checkbox" id="fNoBill" ${f.noBill ? 'checked' : ''}/> Without bill</label>
@@ -1074,15 +1093,16 @@ async function viewExpenses(el) {
   const reload = () => { f.page = 1; viewExpenses(el); };
   $('#q', el).oninput = debounce(e => { f.q = e.target.value; reload(); });
   $('#fPerson', el).onchange = e => { f.person = e.target.value; reload(); };
-  $('#fPurpose', el).onchange = e => { f.purpose = e.target.value; reload(); };
+  $('#fPurpose', el).onchange = e => { f.purpose = e.target.value; f.sub = ''; reload(); };
+  if ($('#fSub', el)) $('#fSub', el).onchange = e => { f.sub = e.target.value; reload(); };
   $('#fFrom', el).onchange = e => { f.from = e.target.value; reload(); };
   $('#fTo', el).onchange = e => { f.to = e.target.value; reload(); };
   $('#fNoBill', el).onchange = e => { f.noBill = e.target.checked; reload(); };
-  const p = () => ({ q: f.q, person: f.person, purpose: f.purpose, from: f.from, to: f.to, noBill: f.noBill ? '1' : '' });
+  const p = () => ({ q: f.q, person: f.person, purpose: f.purpose, sub: f.sub || '', from: f.from, to: f.to, noBill: f.noBill ? '1' : '' });
   $('#exp', el).onclick = async e => {
     const r = await act(e.currentTarget, 'listExpenses', Object.assign(p(), { all: '1' }));
     if (r) exportCSV('expenses', [['ExpenseID', 'Expense'], ['VoucherID', 'Entry'], ['Date', 'Date'], ['Person', 'Person'], ['PersonEmpID', 'Emp ID'], ['Purpose', 'Purpose'],
-      ['PaidTo', 'Paid To'], ['Description', 'Description'], ['Amount', 'Amount'], ['BillURL', 'Bill'], ['EmpName', 'Employee (advance)']], r.rows);
+      ['SubPurpose', 'Sub-category'], ['PaidTo', 'Paid To'], ['Description', 'Description'], ['Amount', 'Amount'], ['BillURL', 'Bill'], ['EmpName', 'Employee (advance)']], r.rows);
   };
 
   load('listExpenses', Object.assign(p(), { page: f.page }), r => {
@@ -1091,7 +1111,7 @@ async function viewExpenses(el) {
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
   body.innerHTML = `<div class="table-card"><div class="tbl-wrap"><table class="tbl">
     <thead><tr><th>Date</th><th>Person</th><th>Purpose</th><th>Paid to</th><th>Description</th><th class="right">Amount</th><th>Bill</th><th>Entry</th></tr></thead>
-    <tbody>${r.rows.map(e => `<tr><td>${esc(e.Date)}</td><td>${who(e.Person, e.PersonEmpID || pid(e.Person))}</td><td>${esc(e.Purpose)}</td><td>${esc(e.PaidTo)}</td>
+    <tbody>${r.rows.map(e => `<tr><td>${esc(e.Date)}</td><td>${who(e.Person, e.PersonEmpID || pid(e.Person))}</td><td>${esc(e.Purpose)}${e.SubPurpose ? ` <span class="muted sm">› ${esc(e.SubPurpose)}</span>` : ''}</td><td>${esc(e.PaidTo)}</td>
       <td class="wrap">${esc(e.Description)}</td><td class="right">${inr(e.Amount)}</td><td>${billLink(e.BillURL)}</td>
       <td><a href="#" data-v="${esc(e.VoucherID)}">${esc(e.VoucherID)}</a></td></tr>`).join('') ||
       '<tr><td colspan="8">' + emptyBox('No expenses found') + '</td></tr>'}</tbody>
@@ -1426,14 +1446,24 @@ function formUser(u, roles) {
 
 function settingsLists(body) {
   const labels = { Purpose: 'Purposes', PaymentMode: 'Payment modes', RecoveryMode: 'Recovery modes' };
+  const subsOf = p => S.cfgRows.map((r, i) => ({ r, i })).filter(x => x.r.type === 'SubPurpose' && x.r.value === p);
+  const sw = (it, i) => `<label class="switch"><input type="checkbox" data-i="${i}" ${it.active ? 'checked' : ''} aria-label="Active"/><i></i></label>`;
+  const cfgRow = (it, i) => {
+    const canSub = it.type === 'Purpose' && it.key !== (S.settings && S.settings.advancePurpose), subs = canSub ? subsOf(it.key) : [], open = canSub && S.subOpen === it.key;
+    return `<div class="cfg-item ${it.active ? '' : 'off'}"><span>${esc(it.key)}</span><span class="cfg-r">
+        ${canSub ? `<button type="button" class="btn btn-ghost btn-sm sub-btn ${open ? 'on' : ''}" data-subs="${i}">Sub${subs.length ? ' · ' + subs.length : ' +'}</button>` : ''}${sw(it, i)}</span></div>
+      ${open ? `<div class="cfg-subs">${subs.map(x => `<div class="cfg-item ${x.r.active ? '' : 'off'}"><span>› ${esc(x.r.key)}</span>${sw(x.r, x.i)}</div>`).join('') ||
+        '<div class="muted sm">Abhi koi sub-category nahi</div>'}
+        <div class="cfg-add"><input class="input" placeholder="New sub-category…" maxlength="60" data-newsub /><button type="button" class="btn btn-ghost btn-sm" data-addsub="${i}">Add</button></div></div>` : ''}`;
+  };
   const draw = () => {
     body.innerHTML = `<div class="cfg-grid">${Object.keys(labels).map(type => `
       <div class="card"><div class="card-h">${labels[type]}</div><div class="card-b">
-        ${S.cfgRows.map((it, i) => it.type !== type ? '' : `<div class="cfg-item ${it.active ? '' : 'off'}"><span>${esc(it.key)}</span>
-          <label class="switch"><input type="checkbox" data-i="${i}" ${it.active ? 'checked' : ''}/><i></i></label></div>`).join('')}
+        ${S.cfgRows.map((it, i) => it.type !== type ? '' : cfgRow(it, i)).join('')}
         <div class="cfg-add"><input class="input" placeholder="Add new…" maxlength="60" data-new="${type}" /><button class="btn btn-ghost btn-sm" data-add="${type}">Add</button></div>
       </div></div>`).join('')}</div>
-      <p class="hint">Items cannot be renamed (old records use the name). Switch an item off to hide it from new entries.</p>
+      <p class="hint">Items cannot be renamed (old records use the name). Switch an item off to hide it from new entries.
+        Kisi Purpose ke aage <b>Sub</b> dabao to uski sub-categories (jaise Office Expense › Kitchen) bana sakte ho.</p>
       <div class="m-actions"><button class="btn btn-primary btn-auto" id="saveCfg">Save changes</button></div>`;
     $$('[data-i]', body).forEach(c => c.onchange = () => { S.cfgRows[c.dataset.i].active = c.checked; draw(); });
     $$('[data-add]', body).forEach(b => b.onclick = () => {
@@ -1443,6 +1473,18 @@ function settingsLists(body) {
       S.cfgRows.push({ type, key, value: '', active: true }); draw();
     });
     $$('[data-new]', body).forEach(inp => inp.onkeydown = e => { if (e.key === 'Enter') $(`[data-add="${inp.dataset.new}"]`, body).click(); });
+    $$('[data-subs]', body).forEach(b => b.onclick = () => { const k = S.cfgRows[b.dataset.subs].key; S.subOpen = S.subOpen === k ? '' : k; draw(); });
+    $$('[data-addsub]', body).forEach(b => {
+      const inp = b.parentElement.querySelector('[data-newsub]');
+      b.onclick = () => {
+        const parent = S.cfgRows[b.dataset.addsub].key, key = inp.value.trim();
+        if (!key) return;
+        if (subsOf(parent).some(x => x.r.key.toLowerCase() === key.toLowerCase())) return toast('Already exists', false);
+        S.cfgRows.push({ type: 'SubPurpose', key, value: parent, active: true }); draw();
+        const again = $('.cfg-subs [data-newsub]', body); if (again) again.focus();
+      };
+      inp.onkeydown = e => { if (e.key === 'Enter') b.click(); };
+    });
     $('#saveCfg', body).onclick = e => saveCfg(e.target);
   };
   draw();
