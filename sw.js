@@ -1,5 +1,5 @@
 // Cash Ledger service worker — bump CACHE when you deploy new files
-const CACHE = 'cash-ledger-v12';
+const CACHE = 'cash-ledger-v13';
 const FONTS = 'cash-ledger-fonts-v1';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'icon.svg',
                'icon-48.png', 'logo-white.png', 'logo-dark.png', 'modules/scrap.js'];
