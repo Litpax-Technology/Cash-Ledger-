@@ -488,12 +488,14 @@ const ICONS = {
 
 const SHORT = { dashboard: 'Home', approvals: 'Approve', mycash: 'My Cash', vouchers: 'Entries', expenses: 'Expenses',
   ledger: 'Ledger', advances: 'Advances', employees: 'Employees', settings: 'Settings' };
+const TOP = { dashboard: 'Overview', approvals: 'Approvals', mycash: 'My Cash', vouchers: 'Entries', expenses: 'Expenses',
+  ledger: 'Ledger', advances: 'Advances', employees: 'Employees', settings: 'Settings' };   // short labels for the top nav
 const icon = id => `<svg viewBox="0 0 24 24">${ICONS[id] || ''}</svg>`;
 
 function buildNav() {
   const items = NAV.filter(n => n.roles.includes(role()));
   $('#nav').innerHTML = items
-    .map(n => `<a class="nav-item" data-id="${n.id}"><span class="ni">${icon(n.id)}${n.label}</span>${n.id === 'approvals' ? '<span class="count hidden appr-count"></span>' : ''}</a>`).join('');
+    .map(n => `<a class="nav-item" data-id="${n.id}"><span class="ni">${icon(n.id)}${TOP[n.id] || n.label}</span>${n.id === 'approvals' ? '<span class="count hidden appr-count"></span>' : ''}</a>`).join('');
   $$('.nav-item').forEach(a => a.onclick = () => go(a.dataset.id));
   // phones: bottom tab bar (max 5 slots; the rest go under "More")
   const main = items.length > 5 ? items.slice(0, 4) : items, more = items.length > 5 ? items.slice(4) : [];
@@ -518,6 +520,7 @@ function go(id, params = {}) {
   $('#fab').classList.toggle('hidden', item.id !== 'mycash');
   const mb = $('#bnav [data-more]'); if (mb) mb.classList.toggle('active', !$('#bnav .bn-item.active[data-id]'));
   $('#pageTitle').textContent = item.label;
+  $('.content').classList.toggle('is-dash', item.id === 'dashboard');
   const page = $('#page'), host = document.createElement('div');
   page.replaceChildren(host);
   page.classList.remove('fade-in'); void page.offsetWidth; page.classList.add('fade-in');
@@ -544,22 +547,30 @@ async function viewDashboard(el) {
   setBadge(r.kpi.pending);
   const k = r.kpi;
   const maxP = Math.max(1, ...r.byPurpose.map(p => p.amount));
-  const sub = (k.pending ? `<b>${k.pending}</b> item${k.pending > 1 ? 's' : ''} waiting for confirmation · ` : 'All caught up · ') +
-    `<b>${inr(k.cashOut)}</b> is with people right now`;
-  const acts = (k.pending ? `<button class="btn btn-primary btn-auto" data-nav="approvals">Review ${k.pending}</button>` : '') +
-    `<button class="btn btn-ghost" data-nav="vouchers">All entries</button>`;
+  const people = r.persons.length, open = r.persons.reduce((s, p) => s + p.open, 0);
+  const sub = `Across ${people} ${people === 1 ? 'person' : 'people'} · ${open} open entr${open === 1 ? 'y' : 'ies'}` +
+    (k.overdue ? ` · <span class="neg">${k.overdue} overdue</span>` : '') +
+    (k.ownerOwes ? ` · ${inr(k.ownerOwes)} payable by Owner` : '');
+  const acts = `<button class="btn btn-ghost" data-nav="vouchers">All entries</button>` +
+    (k.pending ? `<button class="btn btn-primary btn-auto" data-nav="approvals">Review ${k.pending} approval${k.pending > 1 ? 's' : ''}</button>` : '');
+  const ks = (l, v, s, goTo, cls) => `<div class="ks ${goTo ? 'clickable' : ''}" ${goTo ? `data-go="${goTo}"` : ''}>
+    <div class="ks-l">${esc(l)}</div><div class="kpi-v ${cls || ''}">${v}</div><div class="ks-s">${esc(s)}</div></div>`;
   el.innerHTML = `
-    ${helloCard(sub, acts)}
-    <div class="kpis">
-      ${kpi('Cash with people', inr(k.cashOut), 'Given, not yet accounted', { hl: true })}
-      ${kpi('Pending confirmations', k.pending, 'Cash given / returns to confirm', { go: 'approvals' })}
-      ${kpi('Overdue entries', k.overdue, `Open for more than ${r.overdueDays} days`, { go: 'vouchers' })}
-      ${kpi('Payable by Owner', inr(k.ownerOwes), 'Spent more than given')}
-      ${kpi('Given this month', inr(k.givenMonth), 'Confirmed cash entries')}
-      ${kpi('Spent this month', inr(k.spentMonth), k.noBill + ' expenses without bill', { go: 'expenses' })}
-      ${kpi('Advance outstanding', inr(k.advOut), k.advEmp + ' employees', { go: 'advances' })}
+    <div class="dh">
+      <div><div class="dh-k">Cash with people right now</div><div class="kpi-v">${inr(k.cashOut)}</div><div class="dh-s">${sub}</div></div>
+      <div class="dh-a">${acts}</div>
     </div>
-    ${isOwner() ? '' : trendChart(r.trend)}
+    <div class="kstrip">
+      ${ks('Given this month', inr(k.givenMonth), 'Confirmed cash entries')}
+      ${ks('Spent this month', inr(k.spentMonth), k.noBill + ' without bill', 'expenses')}
+      ${ks('Overdue entries', k.overdue, `Open more than ${r.overdueDays} days`, 'vouchers', k.overdue ? 'neg' : '')}
+      ${ks('Advance outstanding', inr(k.advOut), k.advEmp + ' employee' + (k.advEmp === 1 ? '' : 's'), 'advances')}
+    </div>
+    <div class="dgrid">
+      <section class="dsec"><div class="dsec-h"><h2>Daily movement</h2><span class="muted sm">Last 14 days</span></div>${dailyBars(r.trend)}</section>
+      <section class="dsec"><div class="dsec-h"><h2>Waiting for you${k.pending ? '<span class="cnt" aria-hidden="true"></span>' : ''}</h2>
+        <a href="#" class="sm" data-nav="approvals">All approvals</a></div><div class="wl-list" id="wlist">${skel(3)}</div></section>
+    </div>
     <div class="grid2">
       <div class="card"><div class="card-h">Who holds how much <span class="muted">Open entries · click for ledger</span></div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Person</th><th class="right">Open</th><th class="right">Given</th><th class="right">Spent</th><th class="right">Balance</th><th class="right">Oldest</th></tr></thead>
@@ -586,11 +597,60 @@ async function viewDashboard(el) {
     </div>`;
   $$('[data-go]', el).forEach(c => c.onclick = () => go(c.dataset.go, c.dataset.go === 'vouchers' ? { overdue: true } : {}));
   $$('[data-person]', el).forEach(tr => tr.onclick = () => go('ledger', { person: tr.dataset.person }));
-  $$('[data-nav]', el).forEach(b => b.onclick = () => go(b.dataset.nav));
-  if (r.trend) bindTrend(el, r.trend);
+  $$('[data-nav]', el).forEach(b => b.onclick = e => { e.preventDefault(); go(b.dataset.nav); });
   animateNums(el, 'dash');
   $$('[data-v]', el).forEach(tr => tr.onclick = () => openVoucher(tr.dataset.v));
+  waitingList($('#wlist', el));
   }, el);
+}
+
+/* 14-day bars: Given (navy) vs Spent (sky) per day */
+function dailyBars(t) {
+  const d = (t || []).slice(-14);
+  if (!d.length) return emptyBox('No cash movement yet');
+  const W = 560, H = 200, base = 176, top = 14, gw = W / d.length, bw = Math.max(4, Math.min(14, gw / 2 - 4));
+  const max = niceMax(Math.max(1, ...d.map(x => Math.max(x.given, x.spent))));
+  const h = v => v > 0 ? Math.max(3, (base - top) * v / max) : 0;
+  const bar = (x, v, fill, del) => v ? `<rect class="db-b" x="${x.toFixed(1)}" y="${(base - h(v)).toFixed(1)}" width="${bw.toFixed(1)}" height="${h(v).toFixed(1)}" rx="3" fill="${fill}" style="animation-delay:${del}s"/>` : '';
+  const groups = d.map((x, i) => {
+    const cx = i * gw + gw / 2, del = (.3 + i * .045).toFixed(2);
+    return `<g class="db-g"><title>${dLabel(x.d)} — Given ${inr(x.given)} · Spent ${inr(x.spent)}</title>
+      <rect class="db-hit" x="${(i * gw).toFixed(1)}" y="0" width="${gw.toFixed(1)}" height="${base}"/>
+      ${bar(cx - bw - 1, x.given, TREND.given, del)}${bar(cx + 1, x.spent, TREND.spent, del)}
+      ${((i % 3 === 0 && i < d.length - 2) || i === d.length - 1) ? `<text x="${cx.toFixed(1)}" y="${H - 4}" text-anchor="middle" class="db-l">${dLabel(x.d)}</text>` : ''}</g>`;
+  }).join('');
+  return `<svg class="db-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Cash given and spent per day, last ${d.length} days">
+      <line x1="0" x2="${W}" y1="${top}" y2="${top}" class="db-grid"/><text x="0" y="${top - 4}" class="db-l">${shortInr(max)}</text>
+      <line x1="0" x2="${W}" y1="${base}" y2="${base}" class="db-base"/>${groups}</svg>
+    <div class="db-lgd"><span><i style="background:${TREND.given}"></i>Given <b>${inr(sum(d, 'given'))}</b></span>
+      <span><i style="background:${TREND.spent}"></i>Spent <b>${inr(sum(d, 'spent'))}</b></span></div>`;
+}
+
+/* "Waiting for you": pending cash given / returns, Owner confirms right here */
+function waitingList(host) {
+  if (!host) return;
+  load('approvals', {}, r => {
+    if (!r || !r.ok) { host.innerHTML = errBox(); return bindRetry(host); }
+    setBadge(r.count);
+    const items = r.vouchers.map(v => ({ type: 'V', id: v.VoucherID, vid: v.VoucherID, person: v.Person, amt: v.Amount, what: 'Cash given · ' + vTitle(v) }))
+      .concat(r.returns.map(x => ({ type: 'R', id: x.ReturnID, vid: x.VoucherID, person: x.Person, amt: x.Amount, what: 'Cash returned · ' + x.VoucherID })));
+    if (!items.length) { host.innerHTML = emptyBox('All caught up — nothing is waiting'); return; }
+    const own = isOwner();
+    host.innerHTML = items.slice(0, 4).map(it => `<div class="wl-item" data-v="${esc(it.vid)}">
+        <span class="who-cell">${avatar(it.person, 'sm')}<span><b>${esc(it.person)}</b><small>${esc(it.what)}</small></span></span>
+        <span class="wl-r"><b class="wl-amt">${inr(it.amt)}</b>${own
+          ? `<button class="btn btn-ok btn-sm" data-ok="${it.type}|${esc(it.id)}">Confirm</button>`
+          : '<small class="muted">Owner confirms</small>'}</span></div>`).join('') +
+      (items.length > 4 ? `<button class="btn btn-ghost wl-more" data-nav="approvals">View all ${items.length} →</button>` : '');
+    $$('[data-v]', host).forEach(c => c.onclick = () => openVoucher(c.dataset.v));
+    $$('[data-nav]', host).forEach(b => b.onclick = () => go(b.dataset.nav));
+    $$('[data-ok]', host).forEach(b => b.onclick = async e => {
+      e.stopPropagation();
+      const [type, id] = b.dataset.ok.split('|');
+      const x = await act(b, type === 'V' ? 'confirmVoucher' : 'confirmReturn', { id, decision: 'confirm' }, 'Confirmed');
+      if (x) { refreshView(); refreshBadge(); }
+    });
+  }, host);
 }
 
 /* =========================== Approvals =========================== */
