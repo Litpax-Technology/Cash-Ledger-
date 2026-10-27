@@ -1,6 +1,8 @@
 // Cash Ledger service worker — bump CACHE when you deploy new files
-const CACHE = 'cash-ledger-v7';
-const FILES = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'icon.svg'];
+const CACHE = 'cash-ledger-v8';
+const FONTS = 'cash-ledger-fonts-v1';
+const FILES = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'icon.svg',
+               'icon-48.png', 'logo-white.png', 'logo-dark.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
@@ -8,19 +10,56 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil(
-    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE && k !== FONTS).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
-// Network first for our own files (so updates show at once), cache as offline fallback.
-// API calls go to script.google.com and are never cached.
+// Page (index.html): network first, but never wait more than 2.5 s — then use the cached copy.
+// CSS / JS / images: served instantly from cache, refreshed in the background (stale-while-revalidate).
+// Google Fonts: cache first (they never change).
+// API calls (script.google.com) are never touched or cached.
 self.addEventListener('fetch', e => {
-  const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin) return;
-  e.respondWith(
-    fetch(e.request)
-      .then(res => { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); return res; })
-      .catch(() => caches.match(e.request).then(r => r || caches.match('index.html')))
-  );
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+
+  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
+    e.respondWith(caches.open(FONTS).then(c => c.match(req).then(hit => hit || fetch(req).then(res => {
+      if (res.ok || res.type === 'opaque') c.put(req, res.clone());
+      return res;
+    }))));
+    return;
+  }
+  if (url.origin !== location.origin) return;
+
+  if (req.mode === 'navigate') {
+    e.respondWith(networkFirst(req, 2500));
+    return;
+  }
+  e.respondWith(staleWhileRevalidate(req, e));
 });
+
+function networkFirst(req, ms) {
+  return new Promise(resolve => {
+    let done = false;
+    const fromCache = () => caches.match(req).then(r => r || caches.match('index.html'));
+    const timer = setTimeout(() => fromCache().then(r => { if (r && !done) { done = true; resolve(r); } }), ms);
+    fetch(req).then(res => {
+      clearTimeout(timer);
+      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put('index.html', copy)); }
+      if (!done) { done = true; resolve(res); }
+    }).catch(() => {
+      clearTimeout(timer);
+      fromCache().then(r => { if (!done) { done = true; resolve(r || Response.error()); } });
+    });
+  });
+}
+
+function staleWhileRevalidate(req, e) {
+  return caches.open(CACHE).then(c => c.match(req, { ignoreSearch: true }).then(hit => {
+    const net = fetch(req).then(res => { if (res.ok) c.put(req, res.clone()); return res; }).catch(() => hit);
+    if (hit) { e.waitUntil(net); return hit; }
+    return net;
+  }));
+}
