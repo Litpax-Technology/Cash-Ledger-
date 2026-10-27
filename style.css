@@ -909,3 +909,19 @@ body { background: #fff; }
 .pin-eye svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; }
 .pin-eye:hover { color: var(--accent); background: var(--accent-soft); }
 .pin-cell.on .pin-eye { color: var(--accent); }
+
+/* Sub-categories (Purpose › Sub) */
+.bar-row.has-sub { cursor: pointer; border-radius: 8px; transition: background .2s; }
+.bar-row.has-sub:hover, .bar-row.has-sub:focus-visible { background: #f5f8fd; outline: none; }
+.bar-row .chev { display: inline-block; font-style: normal; width: 14px; color: var(--muted); transition: transform .25s ease; }
+.bar-row.open .chev { transform: rotate(90deg); color: var(--accent); }
+.sub-bars { margin: 2px 0 8px 14px; padding-left: 12px; border-left: 2px solid var(--accent-soft); animation: upBlur .35s ease both; }
+.bar-row.sub { padding: 4px 0; font-size: 13px; color: var(--muted); }
+.bar-row.sub .bar { height: 7px; }
+.bar-row.sub .bar span { background: var(--sky); }
+.cfg-item .cfg-r { display: inline-flex; align-items: center; gap: 10px; }
+.sub-btn { padding: 4px 10px; font-size: 12px; }
+.sub-btn.on { border-color: var(--navy); color: var(--navy); background: var(--accent-soft); }
+.cfg-subs { margin: 4px 0 10px 12px; padding: 4px 0 4px 12px; border-left: 2px solid var(--accent-soft); animation: upBlur .3s ease both; }
+.cfg-subs .cfg-item { padding: 6px 0; font-size: 13px; }
+@media (max-width: 720px) { .bar-row.sub { grid-template-columns: 90px 1fr 70px; } }
