@@ -900,3 +900,12 @@ body { background: #fff; }
   .sk-strip .ks { border-right: none; border-bottom: 1px solid var(--border); }
   .sk-strip .ks:last-child { border-bottom: none; }
 }
+
+/* PIN vault (Settings → Users) */
+.pin-cell { display: inline-flex; align-items: center; gap: 6px; }
+.pin-cell b { min-width: 44px; font-variant-numeric: tabular-nums; letter-spacing: .18em; color: var(--muted); }
+.pin-cell.on b { color: var(--navy); letter-spacing: .12em; animation: upBlur .3s ease; }
+.pin-eye { display: inline-grid; place-items: center; width: 32px; height: 32px; }
+.pin-eye svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; }
+.pin-eye:hover { color: var(--accent); background: var(--accent-soft); }
+.pin-cell.on .pin-eye { color: var(--accent); }
