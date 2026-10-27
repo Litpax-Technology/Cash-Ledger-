@@ -441,6 +441,8 @@ function enterApp() {
   buildNav();
   if (S.badge !== undefined) setBadge(S.badge);
   go(isMgr() ? 'dashboard' : 'mycash');
+  // warm the next screen in the background so it opens instantly
+  if (isMgr()) call('approvals', {}, true).then(r => { if (r && r.ok) { memoSet('approvals', {}, r); setBadge(r.count); } });
 }
 
 function showLogin() {
@@ -451,6 +453,7 @@ function showLogin() {
 }
 
 function logout() {
+  if (S.token) jsonp('logout').catch(() => {});        // server stops accepting this token
   S.token = null; S.me = null; S.f = {}; S.badge = undefined;
   MEMO.clear();
   store.del('session'); store.del('boot');
@@ -721,7 +724,7 @@ async function viewVouchers(el, params = {}) {
   $('#fOver', el).onchange = e => { f.overdue = e.target.checked; reload(); };
   const params2 = () => ({ q: f.q, status: f.status, person: f.person, purpose: f.purpose, overdue: f.overdue ? '1' : '' });
   $('#exp', el).onclick = async e => {
-    const r = await act(e.target, 'listVouchers', Object.assign(params2(), { all: '1' }));
+    const r = await act(e.currentTarget, 'listVouchers', Object.assign(params2(), { all: '1' }));
     if (r) exportCSV('cash_entries', [['VoucherID', 'Entry'], ['Date', 'Date'], ['Person', 'Person'], ['PersonEmpID', 'Emp ID'], ['Purpose', 'Purpose'], ['Amount', 'Amount'],
       ['Mode', 'Mode'], ['Spent', 'Spent'], ['Returned', 'Returned'], ['Balance', 'Balance'], ['Status', 'Status'], ['Days', 'Days'],
       ['Remarks', 'Remarks'], ['ConfirmedBy', 'Confirmed By'], ['ClosedBy', 'Closed By'], ['CloseNote', 'Close Note']], r.rows);
@@ -1007,7 +1010,7 @@ async function viewExpenses(el) {
   $('#fNoBill', el).onchange = e => { f.noBill = e.target.checked; reload(); };
   const p = () => ({ q: f.q, person: f.person, purpose: f.purpose, from: f.from, to: f.to, noBill: f.noBill ? '1' : '' });
   $('#exp', el).onclick = async e => {
-    const r = await act(e.target, 'listExpenses', Object.assign(p(), { all: '1' }));
+    const r = await act(e.currentTarget, 'listExpenses', Object.assign(p(), { all: '1' }));
     if (r) exportCSV('expenses', [['ExpenseID', 'Expense'], ['VoucherID', 'Entry'], ['Date', 'Date'], ['Person', 'Person'], ['PersonEmpID', 'Emp ID'], ['Purpose', 'Purpose'],
       ['PaidTo', 'Paid To'], ['Description', 'Description'], ['Amount', 'Amount'], ['BillURL', 'Bill'], ['EmpName', 'Employee (advance)']], r.rows);
   };
@@ -1128,7 +1131,7 @@ async function viewAdvances(el) {
   $('#fEmp', body).onchange = e => { f.empId = e.target.value; reload(); };
   $('#fStatus', body).onchange = e => { f.status = e.target.value; reload(); };
   $('#exp', body).onclick = async e => {
-    const x = await act(e.target, 'listAdvances', { status: f.status, empId: f.empId, q: f.q, all: '1' });
+    const x = await act(e.currentTarget, 'listAdvances', { status: f.status, empId: f.empId, q: f.q, all: '1' });
     if (x) exportCSV('advances', [['AdvanceID', 'Advance'], ['Date', 'Date'], ['EmpID', 'Emp ID'], ['EmpName', 'Employee'], ['Amount', 'Amount'],
       ['Recovered', 'Recovered'], ['Outstanding', 'Outstanding'], ['Status', 'Status'], ['GivenBy', 'Given By'], ['VoucherID', 'Cash Entry']], x.rows);
   };
@@ -1430,4 +1433,5 @@ document.addEventListener('keydown', e => {
   } else startApp();
 })();
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+// register after the page is up, so it never slows the first load
+if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
