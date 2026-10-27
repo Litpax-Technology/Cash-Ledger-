@@ -1,8 +1,8 @@
 // Cash Ledger service worker — bump CACHE when you deploy new files
-const CACHE = 'cash-ledger-v10';
+const CACHE = 'cash-ledger-v11';
 const FONTS = 'cash-ledger-fonts-v1';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'icon.svg',
-               'icon-48.png', 'logo-white.png', 'logo-dark.png'];
+               'icon-48.png', 'logo-white.png', 'logo-dark.png', 'modules/scrap.js'];
 
 self.addEventListener('install', e => {
   // one missing file must not block the update, so each file is cached on its own
