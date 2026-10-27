@@ -430,6 +430,7 @@ async function startApp(pre) {
 function applyStartup(r) {
   S.me = r.me; S.cfg = r.config; S.settings = r.settings; S.persons = r.persons; S.employees = r.employees;
   S.personIds = r.personIds || {};
+  S.mods = r.modules || {};                                // which modules this user can open
   if (r.dash) { memoSet('dashboard', {}, r.dash); setBadge(r.dash.kpi.pending); }
   if (r.mine) memoSet('listVouchers', { page: 1, status: '', mine: '1' }, r.mine);
 }
@@ -493,7 +494,7 @@ const TOP = { dashboard: 'Overview', approvals: 'Approvals', mycash: 'My Cash', 
 const icon = id => `<svg viewBox="0 0 24 24">${ICONS[id] || ''}</svg>`;
 
 function buildNav() {
-  const items = NAV.filter(n => n.roles.includes(role()));
+  const items = NAV.filter(n => n.roles.includes(role()) && (!n.show || n.show()));
   $('#nav').innerHTML = items
     .map(n => `<a class="nav-item" data-id="${n.id}"><span class="ni">${icon(n.id)}${TOP[n.id] || n.label}</span>${n.id === 'approvals' ? '<span class="count hidden appr-count"></span>' : ''}</a>`).join('');
   $$('.nav-item').forEach(a => a.onclick = () => go(a.dataset.id));
@@ -513,14 +514,14 @@ function buildNav() {
 }
 
 function go(id, params = {}) {
-  const allowed = NAV.filter(n => n.roles.includes(role()));
+  const allowed = NAV.filter(n => n.roles.includes(role()) && (!n.show || n.show()));
   const item = allowed.find(n => n.id === id) || allowed[0];
   S.view = item.id; S.params = params;
   $$('.nav-item, .bn-item[data-id]').forEach(a => a.classList.toggle('active', a.dataset.id === item.id));
   $('#fab').classList.toggle('hidden', item.id !== 'mycash');
   const mb = $('#bnav [data-more]'); if (mb) mb.classList.toggle('active', !$('#bnav .bn-item.active[data-id]'));
   $('#pageTitle').textContent = item.label;
-  $('.content').classList.toggle('is-dash', item.id === 'dashboard');
+  $('.content').classList.toggle('is-dash', item.id === 'dashboard' || item.id === 'scrap');   // these pages have their own big header
   const page = $('#page'), host = document.createElement('div');
   page.replaceChildren(host);
   page.classList.remove('fade-in'); void page.offsetWidth; page.classList.add('fade-in');
@@ -633,27 +634,30 @@ function waitingList(host) {
     if (!r || !r.ok) { host.innerHTML = errBox(); return bindRetry(host); }
     setBadge(r.count);
     const items = r.vouchers.map(v => ({ type: 'V', id: v.VoucherID, vid: v.VoucherID, person: v.Person, amt: v.Amount, what: 'Cash given · ' + vTitle(v) }))
-      .concat(r.returns.map(x => ({ type: 'R', id: x.ReturnID, vid: x.VoucherID, person: x.Person, amt: x.Amount, what: 'Cash returned · ' + x.VoucherID })));
+      .concat(r.returns.map(x => ({ type: 'R', id: x.ReturnID, vid: x.VoucherID, person: x.Person, amt: x.Amount, what: 'Cash returned · ' + x.VoucherID })))
+      .concat((r.scrap || []).map(o => ({ type: 'S', id: o.EntryID, vid: '', person: o.Kisne, amt: o.Mila, what: 'Scrap ka cash · ' + o.EntryID })));
     if (!items.length) { host.innerHTML = emptyBox('All caught up — nothing is waiting'); return; }
     const own = isOwner();
-    host.innerHTML = items.slice(0, 4).map(it => `<div class="wl-item" data-v="${esc(it.vid)}">
+    host.innerHTML = items.slice(0, 4).map(it => `<div class="wl-item" ${it.vid ? `data-v="${esc(it.vid)}"` : 'data-scrap'}>
         <span class="who-cell">${avatar(it.person, 'sm')}<span><b>${esc(it.person)}</b><small>${esc(it.what)}</small></span></span>
         <span class="wl-r"><b class="wl-amt">${inr(it.amt)}</b>${own
           ? `<button class="btn btn-ok btn-sm" data-ok="${it.type}|${esc(it.id)}">Confirm</button>`
           : '<small class="muted">Owner confirms</small>'}</span></div>`).join('') +
       (items.length > 4 ? `<button class="btn btn-ghost wl-more" data-nav="approvals">View all ${items.length} →</button>` : '');
     $$('[data-v]', host).forEach(c => c.onclick = () => openVoucher(c.dataset.v));
+    $$('[data-scrap]', host).forEach(c => c.onclick = () => go('scrap'));
     $$('[data-nav]', host).forEach(b => b.onclick = () => go(b.dataset.nav));
     $$('[data-ok]', host).forEach(b => b.onclick = async e => {
       e.stopPropagation();
       const [type, id] = b.dataset.ok.split('|');
-      const x = await act(b, type === 'V' ? 'confirmVoucher' : 'confirmReturn', { id, decision: 'confirm' }, 'Confirmed');
+      const x = await act(b, CONFIRM_ACTION[type], { id, decision: 'confirm' }, 'Confirmed');
       if (x) { refreshView(); refreshBadge(); }
     });
   }, host);
 }
 
 /* =========================== Approvals =========================== */
+const CONFIRM_ACTION = { V: 'confirmVoucher', R: 'confirmReturn', S: 'scrapCashConfirm' };
 async function viewApprovals(el) {
   el.innerHTML = skel(5);
   load('approvals', {}, r => {
@@ -673,12 +677,18 @@ async function viewApprovals(el) {
       <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Person</th><th>Entry</th><th class="right">Amount</th><th>Mode</th><th>Remarks</th><th></th></tr></thead>
       <tbody>${r.returns.map(x => `<tr><td>${esc(x.Date)}</td><td>${who(x.Person, x.PersonEmpID || pid(x.Person))}</td><td><a href="#" data-v="${esc(x.VoucherID)}">${esc(x.VoucherID)}</a> · ${esc(vTitle(x))}</td>
         <td class="right"><b>${inr(x.Amount)}</b></td><td>${esc(x.Mode)}</td><td class="wrap">${esc(x.Remarks)}</td><td class="right">${btns('R', x.ReturnID)}</td></tr>`).join('') ||
-        '<tr><td colspan="7">' + emptyBox('Nothing to confirm') + '</td></tr>'}</tbody></table></div></div>`;
+        '<tr><td colspan="7">' + emptyBox('Nothing to confirm') + '</td></tr>'}</tbody></table></div></div>
+    ${(r.scrap || []).length ? `<div class="card"><div class="card-h">Scrap ka cash — Owner tak pahunchna baaki <span class="muted">${r.scrap.length}</span></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Kiske paas</th><th>Entry</th><th class="right">Amount</th><th>Kaise</th><th></th></tr></thead>
+      <tbody>${r.scrap.map(o => `<tr><td>${esc(o.Date)}</td><td>${who(o.Kisne, pid(o.Kisne))}</td><td class="muted sm">${esc(o.EntryID)} · ${esc(o.Party)}</td>
+        <td class="right"><b>${inr(o.Mila)}</b></td><td>${esc(o.Kaise)}</td>
+        <td class="right">${canAct ? `<button class="btn btn-ok btn-sm" data-ok="S|${esc(o.EntryID)}">Mil gaya</button>` : '<span class="muted sm">Owner confirms</span>'}</td></tr>`).join('')}
+      </tbody></table></div></div>` : ''}`;
 
   $$('[data-v]', el).forEach(a => a.onclick = e => { e.preventDefault(); openVoucher(a.dataset.v); });
   $$('[data-ok]', el).forEach(b => b.onclick = async () => {
     const [type, id] = b.dataset.ok.split('|');
-    const r2 = await act(b, type === 'V' ? 'confirmVoucher' : 'confirmReturn', { id, decision: 'confirm' }, 'Confirmed');
+    const r2 = await act(b, CONFIRM_ACTION[type], { id, decision: 'confirm' }, 'Confirmed');
     if (r2) { refreshView(); refreshBadge(); }
   });
   $$('[data-rej]', el).forEach(b => b.onclick = async () => {
@@ -1429,11 +1439,15 @@ function settingsLists(body) {
 function settingsGeneral(body) {
   const get = k => (S.cfgRows.find(r => r.type === 'Setting' && r.key === k) || {}).value || '';
   const purposes = S.cfgRows.filter(r => r.type === 'Purpose' && r.active).map(r => r.key);
+  const scrapUsers = get('ScrapUsers').split('|').filter(Boolean);
   body.innerHTML = `<div class="card" style="max-width:560px"><div class="card-b"><form class="form" novalidate>
       <label class="full">Overdue after (days)<input class="input" type="number" min="1" max="365" name="OverdueDays" value="${esc(get('OverdueDays') || 7)}" />
         <span class="hint">An Open entry with balance older than this is marked Overdue.</span></label>
       <label class="full">Employee advance purpose<select class="input" name="AdvancePurpose">${opts(purposes, get('AdvancePurpose'))}</select>
         <span class="hint">Cash taken for this purpose is given to employees as advance; only HR/Admin can use it.</span></label>
+      <div class="full"><div class="lbl-plain">Scrap entry users</div>
+        <div class="chk-grid">${S.persons.map(n => `<label class="check"><input type="checkbox" data-scrapuser value="${esc(n)}" ${scrapUsers.includes(n) ? 'checked' : ''}/> ${esc(n)}</label>`).join('') || '<span class="muted sm">No users yet</span>'}</div>
+        <span class="hint">Sirf ye log Scrap Khata mein entry kar sakenge. Koi tick nahi = sab (Admin, HR, Employee). Owner aur Admin hamesha dekh sakte hain.</span></div>
       <div class="m-actions full"><button type="submit" class="btn btn-primary btn-auto">Save</button></div>
     </form></div></div>`;
   const form = $('form', body);
@@ -1442,7 +1456,8 @@ function settingsGeneral(body) {
     const v = formData(form);
     const od = Number(v.OverdueDays);
     if (!(od >= 1 && od <= 365)) return toast('Overdue days must be 1–365', false);
-    ['OverdueDays', 'AdvancePurpose'].forEach(k => {
+    v.ScrapUsers = $$('[data-scrapuser]', form).filter(c => c.checked).map(c => c.value).join('|');
+    ['OverdueDays', 'AdvancePurpose', 'ScrapUsers'].forEach(k => {
       const row = S.cfgRows.find(r => r.type === 'Setting' && r.key === k);
       if (row) row.value = String(v[k]); else S.cfgRows.push({ type: 'Setting', key: k, value: String(v[k]), active: true });
     });
@@ -1482,16 +1497,22 @@ document.addEventListener('keydown', e => {
   if (!$('#modal').classList.contains('hidden')) closeModal();
 });
 
-(function init() {
+// start after every script (app.js + modules/*.js) has loaded, so modules are in the nav
+document.addEventListener('DOMContentLoaded', function init() {
   const sess = store.get('session');
   if (!sess || !sess.token) return showLogin();
   S.token = sess.token; S.me = sess.me;
   const boot = store.get('boot');
   if (boot && boot.me && boot.me.name === sess.me.name) {
     applyStartup(boot); enterApp();                       // open instantly from last session
-    call('bootstrap', {}, true).then(r => { if (r && r.ok) { store.set('boot', r); applyStartup(r); } });
+    call('bootstrap', {}, true).then(r => {
+      if (!r || !r.ok) return;
+      const before = JSON.stringify(S.mods);
+      store.set('boot', r); applyStartup(r);
+      if (JSON.stringify(S.mods) !== before) { buildNav(); go(S.view, S.params); }   // module access changed
+    });
   } else startApp();
-})();
+});
 
 // register after the page is up, so it never slows the first load
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
