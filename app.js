@@ -378,6 +378,20 @@ async function doLogin() {
   } finally { btn.disabled = false; btn.innerHTML = label; }
 }
 
+/* Suite token → server check (ERP suiteMe) → Owner session; fail ho to normal PIN screen */
+async function suiteSso_(tok) {
+  let r = null;
+  try { r = await jsonp('suiteLogin', { suiteToken: tok }); } catch (e) {}
+  if (!r || !r.ok) {
+    showLogin();
+    if (r && r.message) $('#loginErr').textContent = r.message;
+    return;
+  }
+  S.token = r.token; S.me = { name: r.name, role: r.role };
+  store.set('session', { token: S.token, me: S.me });
+  await startApp(r.startup);
+}
+
 function shakeLogin() {
   const box = $('#lgBox');
   box.classList.remove('shake'); void box.offsetWidth; box.classList.add('shake');
@@ -1554,6 +1568,10 @@ document.addEventListener('keydown', e => {
 // start after every script (app.js + modules/*.js) has loaded, so modules are in the nav
 document.addEventListener('DOMContentLoaded', function init() {
   const sess = store.get('session');
+  // Litpax Suite ke andar (Admin login): PIN ke bina seedha Owner
+  let suiteTok = '';
+  try { if (window.parent !== window) suiteTok = sessionStorage.getItem('suite_token') || ''; } catch (e) {}
+  if (suiteTok && !(sess && sess.token && sess.me && sess.me.role === 'Owner')) return suiteSso_(suiteTok);
   if (!sess || !sess.token) return showLogin();
   S.token = sess.token; S.me = sess.me;
   const boot = store.get('boot');
