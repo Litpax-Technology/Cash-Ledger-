@@ -359,6 +359,25 @@ function askText(title, label, required = true, okLabel = 'Submit') {
   });
 }
 
+/* Owner confirm: kis owner ne cash diya — returns name or null */
+function askGivenBy() {
+  return new Promise(resolve => {
+    const list = CONFIG.OWNERS || [];
+    const box = dialog(`<div class="m-head"><div class="m-title">Cash kisne diya?</div></div>
+      <div class="form"><label class="full">Given by<select class="input" data-gb>
+        <option value="">Select owner</option>${list.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}
+      </select></label></div>
+      <div class="m-actions"><button class="btn btn-ghost" data-no>Cancel</button>
+      <button class="btn btn-ok btn-auto" data-yes>Confirm</button></div>`);
+    $('[data-no]', box).onclick = () => { closeDialog(); resolve(null); };
+    $('[data-yes]', box).onclick = () => {
+      const v = $('[data-gb]', box).value;
+      if (!v) return toast('Select who gave the cash', false);
+      closeDialog(); resolve(v);
+    };
+  });
+}
+
 /* =========================== Auth / boot =========================== */
 async function doLogin() {
   const pin = $('#pin').value.trim();
@@ -672,7 +691,9 @@ function waitingList(host) {
     $$('[data-ok]', host).forEach(b => b.onclick = async e => {
       e.stopPropagation();
       const [type, id] = b.dataset.ok.split('|');
-      const x = await act(b, CONFIRM_ACTION[type], { id, decision: 'confirm' }, 'Confirmed');
+      const p = { id, decision: 'confirm' };
+      if (type === 'V') { const g = await askGivenBy(); if (!g) return; p.givenBy = g; }
+      const x = await act(b, CONFIRM_ACTION[type], p, 'Confirmed');
       if (x) { refreshView(); refreshBadge(); }
     });
   }, host);
@@ -710,7 +731,9 @@ async function viewApprovals(el) {
   $$('[data-v]', el).forEach(a => a.onclick = e => { e.preventDefault(); openVoucher(a.dataset.v); });
   $$('[data-ok]', el).forEach(b => b.onclick = async () => {
     const [type, id] = b.dataset.ok.split('|');
-    const r2 = await act(b, CONFIRM_ACTION[type], { id, decision: 'confirm' }, 'Confirmed');
+    const p = { id, decision: 'confirm' };
+    if (type === 'V') { const g = await askGivenBy(); if (!g) return; p.givenBy = g; }
+    const r2 = await act(b, CONFIRM_ACTION[type], p, 'Confirmed');
     if (r2) { refreshView(); refreshBadge(); }
   });
   $$('[data-rej]', el).forEach(b => b.onclick = async () => {
@@ -819,7 +842,7 @@ async function viewVouchers(el, params = {}) {
     const r = await act(e.currentTarget, 'listVouchers', Object.assign(params2(), { all: '1' }));
     if (r) exportCSV('cash_entries', [['VoucherID', 'Entry'], ['Date', 'Date'], ['Person', 'Person'], ['PersonEmpID', 'Emp ID'], ['Purpose', 'Purpose'], ['Amount', 'Amount'],
       ['Mode', 'Mode'], ['Spent', 'Spent'], ['Returned', 'Returned'], ['Balance', 'Balance'], ['Status', 'Status'], ['Days', 'Days'],
-      ['Remarks', 'Remarks'], ['ConfirmedBy', 'Confirmed By'], ['ClosedBy', 'Closed By'], ['CloseNote', 'Close Note']], r.rows);
+      ['Remarks', 'Remarks'], ['GivenBy', 'Given By'], ['ConfirmedBy', 'Confirmed By'], ['ClosedBy', 'Closed By'], ['CloseNote', 'Close Note']], r.rows);
   };
 
   load('listVouchers', Object.assign(params2(), { page: f.page }), r => {
@@ -877,6 +900,7 @@ function renderVoucher(box, r, id) {
     ${v.Remarks ? `<div class="note">${esc(v.Remarks)}</div>` : ''}
     ${isPending ? '<div class="note">Waiting for Owner to confirm this cash was given.</div>' : ''}
     ${v.Status === 'Rejected' ? `<div class="note bad">Rejected by ${esc(v.ConfirmedBy)}: ${esc(v.RejectReason)}</div>` : ''}
+    ${v.GivenBy ? `<div class="note">Cash given by <b>${esc(v.GivenBy)}</b></div>` : ''}
     ${num(v.Balance) < 0 ? `<div class="note bad">Spent ${inr(-num(v.Balance))} more than received — payable by Owner.</div>` : ''}
     ${v.Status === 'Closed' ? `<div class="note">Closed by ${esc(v.ClosedBy)} on ${esc(v.ClosedAt)}${v.CloseNote ? ' — ' + esc(v.CloseNote) : ''}</div>` : ''}
 
@@ -900,7 +924,10 @@ function renderVoucher(box, r, id) {
   const done = (msg, res) => { if (msg) toast(msg); refreshView(); refreshBadge(); openVoucher(id, res && res.detail); };
   const A = a => $(`[data-a="${a}"]`, box);
 
-  if (A('confirm')) A('confirm').onclick = async e => { { const x = await act(e.currentTarget, 'confirmVoucher', { id, decision: 'confirm' }); if (x) done('Cash entry confirmed', x); } };
+  if (A('confirm')) A('confirm').onclick = async e => {
+    const btn = e.currentTarget, g = await askGivenBy(); if (!g) return;
+    const x = await act(btn, 'confirmVoucher', { id, decision: 'confirm', givenBy: g }); if (x) done('Cash entry confirmed', x);
+  };
   if (A('reject')) A('reject').onclick = async e => {
     const btn = e.currentTarget;
     const reason = await askText('Reject cash entry', 'Reason', true, 'Reject');
