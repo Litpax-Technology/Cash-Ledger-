@@ -484,8 +484,8 @@ const NAV = [
   { id: 'vouchers', label: 'All Cash Entries', roles: ['Owner', 'Admin'], render: viewVouchers },
   { id: 'expenses', label: 'Expenses', roles: ['Owner', 'Admin'], render: viewExpenses },
   { id: 'ledger', label: 'Ledger', roles: ROLES, render: viewLedger },
-  { id: 'advances', label: 'Employee Advances', roles: ['Owner', 'Admin', 'HR'], render: viewAdvances },
-  { id: 'employees', label: 'Employees', roles: ['Admin', 'HR'], render: viewEmployees },
+  { id: 'advances', label: 'Employee Advances', roles: ['HR'], render: viewAdvances },
+  { id: 'employees', label: 'Employees', roles: ['HR'], render: viewEmployees },
   { id: 'settings', label: 'Settings', roles: ['Admin'], render: viewSettings }
 ];
 
@@ -579,7 +579,7 @@ async function viewDashboard(el) {
       ${ks('Given this month', inr(k.givenMonth), 'Confirmed cash entries')}
       ${ks('Spent this month', inr(k.spentMonth), k.noBill + ' without bill', 'expenses')}
       ${ks('Overdue entries', k.overdue, `Open more than ${r.overdueDays} days`, 'vouchers', k.overdue ? 'neg' : '')}
-      ${ks('Advance outstanding', inr(k.advOut), k.advEmp + ' employee' + (k.advEmp === 1 ? '' : 's'), 'advances')}
+
     </div>
     <div class="dgrid">
       <section class="dsec"><div class="dsec-h"><h2>Daily movement</h2><span class="muted sm">Last 14 days</span></div>${dailyBars(r.trend)}</section>
