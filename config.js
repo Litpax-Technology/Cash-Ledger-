@@ -5,5 +5,6 @@ const CONFIG = {
   COMPANY: 'Litpax Technology',
   MAX_BILL_MB: 8,        // max bill file size before compression
   BILL_MAX_PX: 1400,     // bill photos are resized to this width/height
-  TIMEOUT_MS: 25000
+  TIMEOUT_MS: 25000,
+  OWNERS: ['Sahil Sir', 'Sneha Mam']   // "Cash kisne diya" dropdown
 };
