@@ -69,7 +69,8 @@ async function call(action, params = {}, quiet = false) {
 const MEMO = new Map(), FRESH_MS = 20000;        // data younger than 20 s is not fetched again
 const keyOf = (a, p) => a + '|' + Object.keys(p || {}).sort().map(k => k + '=' + p[k]).join('&');
 function memoSet(a, p, r) { MEMO.set(keyOf(a, p), { s: JSON.stringify(r), t: Date.now() }); }
-function markStale() { MEMO.forEach(v => { v.t = 0; }); }   // after any save, next view refetches
+function markStale() { MEMO.forEach(v => { v.t = 0; }); }   // show cached, but refetch at once
+function dropCache() { MEMO.clear(); }                         // after any save: old data is never shown again
 async function load(action, params, render, host) {
   const key = keyOf(action, params), hit = MEMO.get(key);
   const tok = host ? (host._tok = (host._tok || 0) + 1) : 0;
@@ -95,7 +96,7 @@ async function submit(form, action, params) {
   btns.forEach(b => { b.disabled = true; b.innerHTML = '<span class="spinner"></span>Saving…'; });
   try {
     const r = await call(action, params);
-    if (r && r.ok) markStale();
+    if (r && r.ok) dropCache();
     return r && r.ok ? r : null;
   } finally {
     form.dataset.busy = '0';
@@ -110,7 +111,7 @@ async function act(btn, action, params, okMsg) {
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>' + label;
   const r = await call(action, params);
   btn.disabled = false; btn.innerHTML = label;
-  if (r && r.ok) { markStale(); if (okMsg) toast(okMsg); return r; }
+  if (r && r.ok) { dropCache(); if (okMsg) toast(okMsg); return r; }
   return null;
 }
 
@@ -1603,7 +1604,27 @@ document.addEventListener('DOMContentLoaded', function init() {
   S.token = sess.token; S.me = sess.me;
   const boot = store.get('boot');
   if (boot && boot.me && boot.me.name === sess.me.name) {
-    applyStartup(boot); enterApp();                       // open instantly from last session
+$('#refreshBtn').onclick = () => { dropCache(); refreshView(); refreshBadge(); };
+
+/* Auto-refresh: screen khula ho to har 20 sec chupchap naya data laao (badla ho tabhi screen badle).
+   Form / popup khula ho ya kuch type ho raha ho to skip — user ka kaam disturb na ho. */
+function softRefresh() {
+  if (document.hidden || !S.token || !S.view || $('#appView').classList.contains('hidden')) return;
+  if (!$('#modal').classList.contains('hidden') || !$('#dialog').classList.contains('hidden')) return;
+  const ae = document.activeElement;
+  if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
+  const item = NAV.find(n => n.id === S.view);
+  if (!item) return;
+  const params = Object.assign({}, S.params); delete params.refresh;   // Employees "Sync now" baar-baar na chale
+  markStale();
+  const y = window.scrollY, host = document.createElement('div');
+  $('#page').replaceChildren(host);
+  item.render(host, params);            // cached data turant (same screen), fresh aate hi update
+  window.scrollTo(0, y);
+  refreshBadge();
+}
+setInterval(softRefresh, 20000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) softRefresh(); });
     call('bootstrap', {}, true).then(r => {
       if (!r || !r.ok) return;
       const before = JSON.stringify(S.mods);
