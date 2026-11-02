@@ -465,7 +465,7 @@ function applyStartup(r) {
   S.me = r.me; S.cfg = r.config; S.settings = r.settings; S.persons = r.persons; S.employees = r.employees;
   S.personIds = r.personIds || {};
   S.mods = r.modules || {};                                // which modules this user can open
-  if (r.dash) { memoSet('dashboard', {}, r.dash); setBadge(r.dash.kpi.pending); }
+  if (r.dash && r.dash.flow) { memoSet('dashboard', { from: r.dash.from, to: r.dash.to }, r.dash); setBadge(r.dash.live.pending); }
   if (r.mine) memoSet('listVouchers', { page: 1, status: '', mine: '1' }, r.mine);
 }
 
@@ -574,69 +574,163 @@ async function refreshBadge() {
   if (r && r.ok) setBadge(r.count);
 }
 
-/* =========================== Dashboard =========================== */
-async function viewDashboard(el) {
-  el.innerHTML = `<div class="kpis">${skel(1).repeat(4)}</div>${skel(6)}`;
-  load('dashboard', {}, r => {
-  if (!r || !r.ok) { el.innerHTML = errBox(); return bindRetry(el); }
-  setBadge(r.kpi.pending);
-  const k = r.kpi;
-  const maxP = Math.max(1, ...r.byPurpose.map(p => p.amount));
-  const people = r.persons.length, open = r.persons.reduce((s, p) => s + p.open, 0);
-  const sub = `Across ${people} ${people === 1 ? 'person' : 'people'} · ${open} open entr${open === 1 ? 'y' : 'ies'}` +
-    (k.overdue ? ` · <span class="neg">${k.overdue} overdue</span>` : '') +
-    (k.ownerOwes ? ` · ${inr(k.ownerOwes)} payable by Owner` : '');
-  const acts = `<button class="btn btn-ghost" data-nav="vouchers">All entries</button>` +
-    (k.pending ? `<button class="btn btn-primary btn-auto" data-nav="approvals">Review ${k.pending} approval${k.pending > 1 ? 's' : ''}</button>` : '');
-  const ks = (l, v, s, goTo, cls) => `<div class="ks ${goTo ? 'clickable' : ''}" ${goTo ? `data-go="${goTo}"` : ''}>
-    <div class="ks-l">${esc(l)}</div><div class="kpi-v ${cls || ''}">${v}</div><div class="ks-s">${esc(s)}</div></div>`;
-  el.innerHTML = `
-    <div class="dh">
-      <div><div class="dh-k">Cash with people right now</div><div class="kpi-v">${inr(k.cashOut)}</div><div class="dh-s">${sub}</div></div>
-      <div class="dh-a">${acts}</div>
-    </div>
-    <div class="kstrip">
-      ${ks('Given this month', inr(k.givenMonth), 'Confirmed cash entries')}
-      ${ks('Spent this month', inr(k.spentMonth), k.noBill + ' without bill', 'expenses')}
-      ${ks('Overdue entries', k.overdue, `Open more than ${r.overdueDays} days`, 'vouchers', k.overdue ? 'neg' : '')}
+/* =========================== Dashboard (Overview) =========================== */
+const PERIODS = [['today', 'Today'], ['week', 'This week'], ['month', 'This month'],
+  ['lastmonth', 'Last month'], ['last30', 'Last 30 days'], ['custom', 'Custom']];
+const ymd = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10); };
+function periodRange(k) {
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  const back = n => { const d = new Date(t); d.setDate(d.getDate() - n); return ymd(d); };
+  if (k === 'today') return { from: today(), to: today() };
+  if (k === 'week') return { from: back((t.getDay() + 6) % 7), to: today() };          // Monday se
+  if (k === 'month') return { from: monthStart(), to: today() };
+  if (k === 'lastmonth') return { from: ymd(new Date(t.getFullYear(), t.getMonth() - 1, 1)), to: ymd(new Date(t.getFullYear(), t.getMonth(), 0)) };
+  return { from: back(29), to: today() };                                                // last 30 days
+}
+const fullD = d => new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+const rangeTxt = (a, b) => a === b ? fullD(a) : fullD(a) + ' – ' + fullD(b);
+const spanDays = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000) + 1;
 
+async function viewDashboard(el) {
+  const f = S.f.dash = S.f.dash || { preset: 'last30' };
+  if (f.preset !== 'custom') Object.assign(f, periodRange(f.preset));
+  else if (!f.from) Object.assign(f, periodRange('last30'));
+  const nd = spanDays(f.from, f.to);
+  el.innerHTML = `<div class="ov-bar fade-in">
+      <div><div class="ov-h">Overview</div>
+        <div class="ov-range">Showing <b>${esc(rangeTxt(f.from, f.to))}</b> · ${nd} day${nd === 1 ? '' : 's'}</div></div>
+      <div class="ov-ctl"><div class="chips">${PERIODS.map(([k, l]) => `<button class="chip ${f.preset === k ? 'on' : ''}" data-per="${k}">${l}</button>`).join('')}</div>
+        ${f.preset === 'custom' ? `<span class="ov-custom"><input class="input" type="date" id="ovFrom" max="${today()}" value="${esc(f.from)}"/>
+          <span>to</span><input class="input" type="date" id="ovTo" max="${today()}" value="${esc(f.to)}"/></span>` : ''}</div>
+    </div><div id="ovBody"><div class="kstrip">${skel(4)}</div>${skel(6)}</div>`;
+  $$('[data-per]', el).forEach(c => c.onclick = () => {
+    f.preset = c.dataset.per;
+    if (f.preset !== 'custom') Object.assign(f, periodRange(f.preset));
+    viewDashboard(el);
+  });
+  const setCustom = () => {
+    const a = $('#ovFrom', el).value, b = $('#ovTo', el).value;
+    if (!a || !b) return;
+    f.from = a <= b ? a : b; f.to = a <= b ? b : a;
+    viewDashboard(el);
+  };
+  if ($('#ovFrom', el)) { $('#ovFrom', el).onchange = setCustom; $('#ovTo', el).onchange = setCustom; }
+  const body = $('#ovBody', el);
+  load('dashboard', { from: f.from, to: f.to }, r => renderOverview(body, r), body);
+}
+
+function renderOverview(el, r) {
+  if (!r || !r.ok || !r.flow) { el.innerHTML = errBox(); return bindRetry(el); }
+  setBadge(r.live.pending);
+  const F = r.flow, L = r.live, P = r.persons;
+  const fbox = (l, v, s, cls, k) => `<div class="fbox ${cls || ''} ${k ? 'clickable' : ''}" ${k ? `data-k="${k}"` : ''}>
+    <span>${l}</span><b>${inr(v)}</b><small>${esc(s)}</small></div>`;
+  const op = s => `<div class="fop" aria-hidden="true">${s}</div>`;
+  const ks = (l, v, s, k, cls) => `<div class="ks ${k ? 'clickable' : ''}" ${k ? `data-k="${k}"` : ''}>
+    <div class="ks-l">${esc(l)}</div><div class="kpi-v ${cls || ''}">${v}</div><div class="ks-s">${esc(s)}</div></div>`;
+  const gmax = Math.max(1, ...r.givers.map(g => g.amount));
+  const maxP = Math.max(1, ...r.byPurpose.map(p => p.amount));
+  const unitTxt = { day: 'Daily', week: 'Weekly', month: 'Monthly' }[r.unit] || 'Daily';
+  const tot = k => P.reduce((s, x) => s + num(x[k]), 0);
+  const gvChips = gs => gs.length
+    ? `<span class="gv-chips">${gs.map(g => `<span class="gv">${esc(g.name)} · ${inr(g.amount)}</span>`).join('')}</span>`
+    : '<span class="muted">—</span>';
+
+  el.innerHTML = `
+    <div class="ov-lbl">Abhi ki position · live (period se alag)</div>
+    <div class="kstrip">
+      ${ks('Cash with people', inr(L.cashOut), L.ownerOwes ? inr(L.ownerOwes) + ' payable by Owner' : 'Sab open entries ka balance')}
+      ${ks('Waiting for approval', L.pending, L.pending ? 'Owner confirm karega' : 'Kuch pending nahi', 'approvals', L.pending ? 'neg' : '')}
+      ${ks('Overdue entries', L.overdue, 'Open > ' + r.overdueDays + ' din, balance baaki', 'overdue', L.overdue ? 'neg' : '')}
+      ${ks('Bill missing', r.noBillCount, 'Is period ke expenses', 'nobill', r.noBillCount ? 'neg' : '')}
     </div>
-    <div class="dgrid">
-      <section class="dsec"><div class="dsec-h"><h2>Daily movement</h2><span class="muted sm">Last 14 days</span></div>${dailyBars(r.trend)}</section>
-      <section class="dsec"><div class="dsec-h"><h2>Waiting for you${k.pending ? '<span class="cnt" aria-hidden="true"></span>' : ''}</h2>
-        <a href="#" class="sm" data-nav="approvals">All approvals</a></div><div class="wl-list" id="wlist">${skel(3)}</div></section>
+
+    <div class="ov-lbl">Cash ka hisaab · ${esc(rangeTxt(r.from, r.to))}</div>
+    <div class="flow fade-in">
+      ${fbox('Opening', F.opening, 'Logon ke paas, period se pehle')}${op('+')}
+      ${fbox('Given', F.given, F.givenCount + ' entr' + (F.givenCount === 1 ? 'y' : 'ies') + ' · list neeche', 'in', 'given')}${op('−')}
+      ${fbox('Spent', F.spent, 'Expenses dekho →', 'out', 'spent')}${op('−')}
+      ${fbox('Returned', F.returned, 'Owner ko wapas')}
+      ${F.settled ? op('−') + fbox('Settled', F.settled, 'Close karte waqt adjust') : ''}${op('=')}
+      ${fbox('Closing', F.closing, 'Logon ke paas, ' + fullD(r.to) + ' tak', 'hl')}
     </div>
+
     <div class="grid2">
-      <div class="card"><div class="card-h">Who holds how much <span class="muted">Open entries · click for ledger</span></div>
-        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Person</th><th class="right">Open</th><th class="right">Given</th><th class="right">Spent</th><th class="right">Balance</th><th class="right">Oldest</th></tr></thead>
-        <tbody>${r.persons.map(p => `<tr class="click" data-person="${esc(p.person)}"><td>${who(p.person, p.empId)}${p.overdue ? ' <span class="badge b-rejected">' + p.overdue + ' overdue</span>' : ''}</td>
-          <td class="right">${p.open}</td><td class="right">${inr(p.given)}</td><td class="right">${inr(p.spent)}</td>
-          <td class="right"><b class="${p.balance < 0 ? 'neg' : ''}">${inr(p.balance)}</b></td><td class="right">${p.oldestDays}d</td></tr>`).join('') ||
-          '<tr><td colspan="6">' + emptyBox('Nobody is holding cash right now') + '</td></tr>'}</tbody></table></div></div>
-      <div class="card"><div class="card-h">Spend by purpose <span class="muted">${esc(r.month)}</span></div>
-        <div class="card-b">${r.byPurpose.map((p, k) => { const hs = p.subs && p.subs.length; return `<div class="bar-row ${hs ? 'has-sub' : ''}" ${hs ? `data-pp="${k}" role="button" tabindex="0" aria-expanded="false" title="Breakdown dekho"` : ''}>
+      <div class="card"><div class="card-h">Cash kisne diya <span class="muted">is period mein</span></div><div class="card-b">
+        ${r.givers.map(g => `<div class="bar-row"><span class="lbl">${esc(g.name)} <small class="muted">· ${g.count} entr${g.count === 1 ? 'y' : 'ies'}</small></span>
+          <div class="bar"><span style="width:${(g.amount / gmax * 100).toFixed(1)}%"></span></div><b class="right">${inr(g.amount)}</b></div>`).join('') ||
+          emptyBox('Is period mein koi cash nahi diya')}
+        ${r.givers.some(g => g.name === 'Not recorded') ? '<div class="giv-note">"Not recorded" = purani entries jinme Given by save nahi hua tha.</div>' : ''}
+      </div></div>
+      <div class="card"><div class="card-h">Waiting for you <span class="spacer"></span><a href="#" class="sm" data-nav="approvals">All approvals</a></div>
+        <div class="card-b"><div class="wl-list" id="wlist">${skel(3)}</div></div></div>
+    </div>
+
+    <div class="card ov-sec"><div class="card-h">Kisko kitna diya <span class="muted">period ka hisaab · row click = ledger</span></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Person</th><th class="right">Given</th><th class="right">Spent</th>
+        <th class="right">Returned</th><th class="right">Balance (abhi)</th><th class="right">Entries</th><th>Kisne diya</th></tr></thead>
+      <tbody>${P.map(p => `<tr class="click" data-person="${esc(p.person)}">
+        <td>${who(p.person, p.empId)}${p.overdue ? ` <span class="badge b-rejected">${p.overdue} overdue</span>` : ''}</td>
+        <td class="right"><b>${inr(p.given)}</b></td><td class="right">${inr(p.spent)}</td><td class="right">${inr(p.returned)}</td>
+        <td class="right"><b class="${p.balance < 0 ? 'neg' : ''}">${inr(p.balance)}</b>${p.open ? `<div class="muted sm">${p.open} open · ${p.oldestDays}d</div>` : ''}</td>
+        <td class="right">${p.entries}</td><td>${gvChips(p.givers)}</td></tr>`).join('') ||
+        '<tr><td colspan="7">' + emptyBox('Is period mein koi movement nahi') + '</td></tr>'}</tbody>
+      ${P.length ? `<tfoot><tr><td>Total</td><td class="right">${inr(tot('given'))}</td><td class="right">${inr(tot('spent'))}</td>
+        <td class="right">${inr(tot('returned'))}</td><td class="right">${inr(tot('balance'))}</td><td class="right">${tot('entries')}</td><td></td></tr></tfoot>` : ''}
+      </table></div></div>
+
+    <div class="grid2 ov-sec">
+      <div class="card"><div class="card-h">${unitTxt} movement <span class="muted">Given vs Spent</span></div>
+        <div class="card-b">${periodBars(r.trend, r.unit)}</div></div>
+      <div class="card"><div class="card-h">Spend by purpose <span class="muted">is period mein</span></div>
+        <div class="card-b">${r.byPurpose.map((p, k) => { const hs = p.subs && p.subs.length; return `<div class="bar-row ${hs ? 'has-sub' : ''}" ${hs ? `data-pp="${k}" role="button" tabindex="0" aria-expanded="false"` : ''}>
           <span class="lbl">${hs ? '<i class="chev" aria-hidden="true">›</i>' : ''}${esc(p.purpose)}</span>
           <div class="bar"><span style="width:${(p.amount / maxP * 100).toFixed(1)}%"></span></div><b class="right">${inr(p.amount)}</b></div>
           ${hs ? `<div class="sub-bars hidden" data-ppsub="${k}">${p.subs.map(s => `<div class="bar-row sub"><span class="lbl">${esc(s.sub)}</span>
             <div class="bar"><span style="width:${(s.amount / p.amount * 100).toFixed(1)}%"></span></div><b class="right">${inr(s.amount)}</b></div>`).join('')}</div>` : ''}`; }).join('') ||
-          emptyBox('No expenses this month')}</div></div>
+          emptyBox('Is period mein koi expense nahi')}</div></div>
     </div>
-    <div class="grid2" style="margin-top:18px">
-      <div class="card"><div class="card-h">Overdue entries <span class="muted">older than ${r.overdueDays} days with balance</span></div>
-        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Entry</th><th>Person</th><th>Purpose</th><th class="right">Balance</th><th class="right">Days</th></tr></thead>
+
+    <div class="card ov-sec" id="ovRecent"><div class="card-h">Cash given · kab, kisko, kitna
+        <span class="muted">${r.recent.length < F.givenCount ? 'latest ' + r.recent.length + ' of ' + F.givenCount : F.givenCount + ' entr' + (F.givenCount === 1 ? 'y' : 'ies')}</span>
+        <span class="spacer"></span><a href="#" class="sm" data-k="allv">All entries →</a></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Person</th><th class="right">Amount</th><th>Given by</th>
+        <th>Note</th><th class="right">Balance</th><th>Status</th></tr></thead>
+      <tbody>${r.recent.map(v => `<tr class="click" data-v="${esc(v.VoucherID)}"><td>${esc(v.Date)}</td>
+        <td>${who(v.Person, v.PersonEmpID || pid(v.Person))}</td><td class="right"><b>${inr(v.Amount)}</b></td>
+        <td>${v.GivenBy ? esc(v.GivenBy) : '<span class="muted">—</span>'}</td><td class="wrap">${esc(vTitle(v))}</td>
+        <td class="right">${inr(v.Balance)}</td><td>${badge(v.Status, v.Overdue)}</td></tr>`).join('') ||
+        '<tr><td colspan="7">' + emptyBox('Is period mein koi cash nahi diya') + '</td></tr>'}</tbody></table></div></div>
+
+    <div class="grid2 ov-sec">
+      <div class="card"><div class="card-h">Overdue entries <span class="muted">live · ${r.overdueDays} din se purani, balance baaki</span></div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Entry</th><th>Person</th><th>Note</th><th class="right">Balance</th><th class="right">Days</th></tr></thead>
         <tbody>${r.overdue.map(v => `<tr class="click" data-v="${esc(v.VoucherID)}"><td>${esc(v.VoucherID)}</td><td>${esc(v.Person)}</td><td>${esc(vTitle(v))}</td>
           <td class="right"><b>${inr(v.Balance)}</b></td><td class="right neg">${v.Days}</td></tr>`).join('') ||
           '<tr><td colspan="5">' + emptyBox('No overdue entries') + '</td></tr>'}</tbody></table></div></div>
-      <div class="card"><div class="card-h">Expenses without bill <span class="muted">this month</span></div>
+      <div class="card"><div class="card-h">Expenses without bill <span class="muted">is period mein</span></div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Person</th><th>Paid to</th><th class="right">Amount</th></tr></thead>
         <tbody>${r.noBill.map(e => `<tr class="click" data-v="${esc(e.VoucherID)}"><td>${esc(e.Date)}</td><td>${esc(e.Person)}</td><td>${esc(e.PaidTo)}</td>
           <td class="right">${inr(e.Amount)}</td></tr>`).join('') ||
           '<tr><td colspan="4">' + emptyBox('All expenses have bills') + '</td></tr>'}</tbody></table></div></div>
     </div>`;
-  $$('[data-go]', el).forEach(c => c.onclick = () => go(c.dataset.go, c.dataset.go === 'vouchers' ? { overdue: true } : {}));
-  $$('[data-person]', el).forEach(tr => tr.onclick = () => go('ledger', { person: tr.dataset.person }));
+
+  // clicks: flow boxes + live strip
+  const toExp = noBill => {
+    S.f.expenses = Object.assign(S.f.expenses || { q: '', person: '', purpose: '' }, { from: r.from, to: r.to, page: 1, noBill, sub: '' });
+    go('expenses');
+  };
+  const K = {
+    given: () => $('#ovRecent', el).scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    spent: () => toExp(false), nobill: () => toExp(true),
+    approvals: () => go('approvals'), overdue: () => go('vouchers', { overdue: true }), allv: () => go('vouchers')
+  };
+  $$('[data-k]', el).forEach(c => c.onclick = e => { e.preventDefault(); if (K[c.dataset.k]) K[c.dataset.k](); });
+  $$('[data-person]', el).forEach(tr => tr.onclick = () => {
+    S.f.ledger = { person: tr.dataset.person, from: r.from, to: r.to };       // ledger usi period ka khule
+    go('ledger', { person: tr.dataset.person });
+  });
   $$('[data-nav]', el).forEach(b => b.onclick = e => { e.preventDefault(); go(b.dataset.nav); });
-  animateNums(el, 'dash');
   $$('[data-v]', el).forEach(tr => tr.onclick = () => openVoucher(tr.dataset.v));
   $$('[data-pp]', el).forEach(row => {
     const toggle = () => { const s = $(`[data-ppsub="${row.dataset.pp}"]`, el), open = s.classList.toggle('hidden') === false;
@@ -644,30 +738,34 @@ async function viewDashboard(el) {
     row.onclick = toggle; row.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } };
   });
   waitingList($('#wlist', el));
-  }, el);
 }
 
-/* 14-day bars: Given (navy) vs Spent (sky) per day */
-function dailyBars(t) {
-  const d = (t || []).slice(-14);
-  if (!d.length) return emptyBox('No cash movement yet');
-  const W = 560, H = 200, base = 176, top = 14, gw = W / d.length, bw = Math.max(4, Math.min(14, gw / 2 - 4));
-  const max = niceMax(Math.max(1, ...d.map(x => Math.max(x.given, x.spent))));
+/* Given (navy) vs Spent (sky) — bars per day / week / month, period ke hisaab se */
+function periodBars(t, unit) {
+  if (!t || !t.length || !t.some(x => x.given || x.spent)) return emptyBox('Is period mein koi cash movement nahi');
+  const n = t.length, W = 560, H = 200, base = 176, top = 14, gw = W / n, bw = Math.max(2, Math.min(14, gw / 2 - 2));
+  const max = niceMax(Math.max(1, ...t.map(x => Math.max(x.given, x.spent))));
   const h = v => v > 0 ? Math.max(3, (base - top) * v / max) : 0;
-  const bar = (x, v, fill, del) => v ? `<rect class="db-b" x="${x.toFixed(1)}" y="${(base - h(v)).toFixed(1)}" width="${bw.toFixed(1)}" height="${h(v).toFixed(1)}" rx="3" fill="${fill}" style="animation-delay:${del}s"/>` : '';
-  const groups = d.map((x, i) => {
-    const cx = i * gw + gw / 2, del = (.3 + i * .045).toFixed(2);
-    return `<g class="db-g"><title>${dLabel(x.d)} — Given ${inr(x.given)} · Spent ${inr(x.spent)}</title>
+  const lab = x => unit === 'month' ? new Date(x.d + 'T00:00:00').toLocaleDateString('en-IN', { month: 'short', year: '2-digit' }) : dLabel(x.d);
+  const span = x => unit === 'day' ? dLabel(x.d) : dLabel(x.d) + ' – ' + dLabel(x.d2);
+  const step = Math.max(1, Math.ceil(n / 6));
+  const bar = (x, v, fill, del) => v ? `<rect class="db-b" x="${x.toFixed(1)}" y="${(base - h(v)).toFixed(1)}" width="${bw.toFixed(1)}" height="${h(v).toFixed(1)}" rx="${Math.min(3, bw / 2)}" fill="${fill}" style="animation-delay:${del}s"/>` : '';
+  const groups = t.map((x, i) => {
+    const cx = i * gw + gw / 2, del = (.2 + i * Math.min(.045, 1 / n)).toFixed(2);
+    const showL = i === n - 1 || (i % step === 0 && n - 1 - i >= step * .6);
+    const anchor = i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle', lx = i === 0 ? 1 : i === n - 1 ? W - 1 : cx;
+    return `<g class="db-g"><title>${span(x)} — Given ${inr(x.given)} · Spent ${inr(x.spent)}</title>
       <rect class="db-hit" x="${(i * gw).toFixed(1)}" y="0" width="${gw.toFixed(1)}" height="${base}"/>
       ${bar(cx - bw - 1, x.given, TREND.given, del)}${bar(cx + 1, x.spent, TREND.spent, del)}
-      ${((i % 3 === 0 && i < d.length - 2) || i === d.length - 1) ? `<text x="${cx.toFixed(1)}" y="${H - 4}" text-anchor="middle" class="db-l">${dLabel(x.d)}</text>` : ''}</g>`;
+      ${showL ? `<text x="${lx.toFixed(1)}" y="${H - 4}" text-anchor="${anchor}" class="db-l">${lab(x)}</text>` : ''}</g>`;
   }).join('');
-  return `<svg class="db-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Cash given and spent per day, last ${d.length} days">
+  return `<svg class="db-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Cash given and spent, ${unit}-wise">
       <line x1="0" x2="${W}" y1="${top}" y2="${top}" class="db-grid"/><text x="0" y="${top - 4}" class="db-l">${shortInr(max)}</text>
       <line x1="0" x2="${W}" y1="${base}" y2="${base}" class="db-base"/>${groups}</svg>
-    <div class="db-lgd"><span><i style="background:${TREND.given}"></i>Given <b>${inr(sum(d, 'given'))}</b></span>
-      <span><i style="background:${TREND.spent}"></i>Spent <b>${inr(sum(d, 'spent'))}</b></span></div>`;
+    <div class="db-lgd"><span><i style="background:${TREND.given}"></i>Given <b>${inr(sum(t, 'given'))}</b></span>
+      <span><i style="background:${TREND.spent}"></i>Spent <b>${inr(sum(t, 'spent'))}</b></span></div>`;
 }
+
 
 /* "Waiting for you": pending cash given / returns, Owner confirms right here */
 function waitingList(host) {
