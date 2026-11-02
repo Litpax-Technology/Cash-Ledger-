@@ -1604,27 +1604,7 @@ document.addEventListener('DOMContentLoaded', function init() {
   S.token = sess.token; S.me = sess.me;
   const boot = store.get('boot');
   if (boot && boot.me && boot.me.name === sess.me.name) {
-$('#refreshBtn').onclick = () => { dropCache(); refreshView(); refreshBadge(); };
-
-/* Auto-refresh: screen khula ho to har 20 sec chupchap naya data laao (badla ho tabhi screen badle).
-   Form / popup khula ho ya kuch type ho raha ho to skip — user ka kaam disturb na ho. */
-function softRefresh() {
-  if (document.hidden || !S.token || !S.view || $('#appView').classList.contains('hidden')) return;
-  if (!$('#modal').classList.contains('hidden') || !$('#dialog').classList.contains('hidden')) return;
-  const ae = document.activeElement;
-  if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
-  const item = NAV.find(n => n.id === S.view);
-  if (!item) return;
-  const params = Object.assign({}, S.params); delete params.refresh;   // Employees "Sync now" baar-baar na chale
-  markStale();
-  const y = window.scrollY, host = document.createElement('div');
-  $('#page').replaceChildren(host);
-  item.render(host, params);            // cached data turant (same screen), fresh aate hi update
-  window.scrollTo(0, y);
-  refreshBadge();
-}
-setInterval(softRefresh, 20000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) softRefresh(); });
+    applyStartup(boot); enterApp();
     call('bootstrap', {}, true).then(r => {
       if (!r || !r.ok) return;
       const before = JSON.stringify(S.mods);
