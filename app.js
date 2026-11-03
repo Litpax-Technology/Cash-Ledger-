@@ -380,22 +380,89 @@ function askGivenBy() {
 }
 
 /* =========================== Auth / boot =========================== */
+/* Login: Emp ID → (Employee: seedha andar) | (HR / Owner / Admin: PIN step) */
+const LG_ARROW = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 5l7 7-7 7M20 12H4"/></svg>';
+const pinMode = () => !$('#pinStep').classList.contains('hidden');
+function setLoginBtn() { $('#loginBtn').innerHTML = `<span>${pinMode() ? 'Sign in' : 'Continue'}</span>${LG_ARROW}`; }
+
 async function doLogin() {
-  const pin = $('#pin').value.trim();
   const err = $('#loginErr');
-  if (!/^\d{4}$/.test(pin)) { err.textContent = 'Enter your 4 digit PIN'; return; }
-  const btn = $('#loginBtn'), label = btn.innerHTML;
+  const id = $('#loginId').value.trim();
+  if (!id) { err.textContent = 'Enter your Emp ID'; $('#loginId').focus(); return; }
+  const withPin = pinMode(), pin = $('#pin').value.trim();
+  if (withPin && !/^\d{4}$/.test(pin)) { err.textContent = 'Enter your 4 digit PIN'; return; }
+  const btn = $('#loginBtn');
+  if (btn.disabled) return;
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Checking…'; err.textContent = '';
   try {
-    const r = await jsonp('login', { pin });
-    if (!r.ok) { err.textContent = r.message || 'Login failed'; shakeLogin(); return; }
+    const r = await jsonp('login', withPin ? { id, pin } : { id });
+    if (r && r.needPin) return showPinStep(r);                // approver: PIN chahiye
+    if (!r || !r.ok) { err.textContent = (r && r.message) || 'Login failed'; shakeLogin(); return; }
     S.token = r.token; S.me = { name: r.name, role: r.role };
     store.set('session', { token: S.token, me: S.me });
-    $('#pin').value = '';
+    $('#pin').value = ''; $('#loginId').value = '';
     await startApp(r.startup);
   } catch (e) {
     err.textContent = 'Could not connect. Check internet and try again.';
-  } finally { btn.disabled = false; btn.innerHTML = label; }
+  } finally { btn.disabled = false; setLoginBtn(); }
+}
+
+function showPinStep(r) {
+  $('#idStep').classList.add('hidden'); $('#pinStep').classList.remove('hidden');
+  $('#lgHello').textContent = 'Hi, ' + (r.name || 'there');
+  $('#lgSub').textContent = r.newPin ? 'Pehli baar — apna 4-digit PIN set karo' : 'Enter your 4-digit PIN';
+  $('#pinLbl').textContent = r.newPin ? 'New PIN' : 'PIN';
+  $('#lgHint').textContent = r.newPin ? 'Ye PIN yaad rakhna — agli baar yahi lagega' : 'Signs in automatically after 4 digits';
+  $('#pin').value = ''; setLoginBtn(); drawPin();
+  setTimeout(() => $('#pin').focus(), 30);
+}
+
+function showIdStep() {
+  $('#pinStep').classList.add('hidden'); $('#idStep').classList.remove('hidden');
+  $('#pin').value = ''; $('#loginErr').textContent = '';
+  $('#lgSub').textContent = 'Sign in with your Emp ID';
+  $('#lgHint').textContent = 'HR / Owner / Admin ko agle step mein PIN dalna hoga';
+  initLoginScreen(); setLoginBtn();
+  setTimeout(() => $('#loginId').focus(), 30);
+}
+
+/* Self register: pehle Emp ID check (naam dikhao), phir request bhejo */
+let REG = null;
+function showReg(on) {
+  $('#lgBox').classList.toggle('hidden', on); $('#regBox').classList.toggle('hidden', !on);
+  REG = null;
+  const btn = $('#regBtn');
+  btn.classList.remove('hidden'); btn.disabled = false; btn.innerHTML = '<span>Check Emp ID</span>';
+  $('#regErr').textContent = ''; $('#regInfo').className = 'reg-info hidden'; $('#regId').disabled = false;
+  if (on) { $('#regId').value = $('#loginId').value.trim(); setTimeout(() => $('#regId').focus(), 30); }
+  else showIdStep();
+}
+
+async function doRegister() {
+  const err = $('#regErr'), info = $('#regInfo'), btn = $('#regBtn'), id = $('#regId').value.trim();
+  if (!id) { err.textContent = 'Enter your Emp ID'; return; }
+  if (btn.disabled) return;
+  let next = REG ? 'Request bhejo' : 'Check Emp ID';
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>' + (REG ? 'Sending…' : 'Checking…'); err.textContent = '';
+  try {
+    const r = await jsonp('register', REG ? { empId: REG.empId, confirm: '1' } : { empId: id });
+    if (!r || !r.ok) { err.textContent = (r && r.message) || 'Could not register'; return; }
+    if (!REG) {
+      REG = { empId: r.empId, name: r.name };
+      info.innerHTML = `<b>${esc(r.name)}</b><span>${esc(r.empId)}${r.dept ? ' · ' + esc(r.dept) : ''}</span><small>Ye aap ho? Toh request bhejo.</small>`;
+      info.className = 'reg-info'; $('#regId').disabled = true;
+      next = 'Request bhejo';
+    } else {
+      info.innerHTML = '<b>Request bhej di ✓</b><small>Admin approve karega, uske baad apni Emp ID se login karna.</small>';
+      info.className = 'reg-info done';
+      next = null;
+    }
+  } catch (e) {
+    err.textContent = 'Could not connect. Check internet and try again.';
+  } finally {
+    btn.disabled = false; btn.innerHTML = `<span>${next || ''}</span>`;
+    btn.classList.toggle('hidden', !next);
+  }
 }
 
 /* Suite token → server check (ERP suiteMe) → Owner session; fail ho to normal PIN screen */
@@ -415,7 +482,8 @@ async function suiteSso_(tok) {
 function shakeLogin() {
   const box = $('#lgBox');
   box.classList.remove('shake'); void box.offsetWidth; box.classList.add('shake');
-  $('#pin').value = ''; $('#pin').focus(); drawPin();
+  if (pinMode()) { $('#pin').value = ''; $('#pin').focus(); drawPin(); }
+  else $('#loginId').select();
 }
 
 /* OTP-style PIN boxes mirror the hidden input */
@@ -483,8 +551,8 @@ function enterApp() {
 function showLogin() {
   $('#appView').classList.add('hidden');
   $('#loginView').classList.remove('hidden');
-  initLoginScreen();
-  setTimeout(() => $('#pin').focus(), 50);
+  $('#regBox').classList.add('hidden'); $('#lgBox').classList.remove('hidden');
+  showIdStep();
 }
 
 function logout() {
@@ -1514,19 +1582,33 @@ async function viewSettings(el) {
 async function settingsUsers(body) {
   const r = await call('listUsers');
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
-  body.innerHTML = `<div class="toolbar"><span class="muted">Every person who takes cash from the Owner needs a user with a PIN.</span>
+  const pend = r.pending || [];
+  body.innerHTML = `${pend.length ? `<div class="card req-card"><div class="card-h">New user requests <span class="badge b-pending">${pend.length}</span>
+        <span class="muted">Emp ID se khud register kiya</span></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Emp ID</th><th>Department</th><th>Requested</th><th class="right">Action</th></tr></thead>
+      <tbody>${pend.map((p, i) => `<tr><td>${who(p.Name, p.EmpID)}</td><td>${esc(p.EmpID)}</td><td>${esc(p.Department || '—')}</td><td>${esc(p.RequestedAt || '')}</td>
+        <td class="right nowrap"><button class="btn btn-ghost btn-sm" data-rej="${i}">Reject</button>
+          <button class="btn btn-primary btn-sm btn-auto" data-apr="${i}">Approve</button></td></tr>`).join('')}</tbody>
+      </table></div></div>` : ''}
+    <div class="toolbar"><span class="muted">Employee sirf Emp ID se login karta hai · HR / Owner / Admin ko PIN bhi lagta hai.</span>
       <span class="spacer"></span><button class="btn btn-primary btn-auto" id="add">+ Add User</button></div>
-    <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Emp ID</th><th>Role</th><th>PIN</th><th>Status</th></tr></thead>
+    <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Emp ID / Login ID</th><th>Role</th><th>PIN</th><th>Status</th></tr></thead>
     <tbody>${r.rows.map((u, i) => `<tr class="click" data-i="${i}"><td>${who(u.Name)}</td>
-      <td>${u.EmpID ? esc(u.EmpID) : (EMP_ROLES.includes(u.Role) ? '<span class="badge b-rejected">Not linked</span>' : '<span class="muted">—</span>')}</td>
-      <td>${esc(u.Role)}</td><td>${u.HasPin
+      <td>${u.EmpID ? esc(u.EmpID) : u.LoginID ? `${esc(u.LoginID)} <span class="muted sm">login ID</span>` : (EMP_ROLES.includes(u.Role) ? '<span class="badge b-rejected">Not linked</span>' : '<span class="badge b-rejected">No login ID</span>')}</td>
+      <td>${esc(u.Role)}</td><td>${!PIN_ROLES.includes(u.Role) ? '<span class="muted sm">Not needed</span>' : u.HasPin
         ? `<span class="pin-cell"><b data-pinv>••••</b><button class="icon-btn pin-eye" title="PIN dekho" aria-label="Show PIN of ${esc(u.Name)}" data-pin="${esc(u.Name)}"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></span>`
-        : '<span class="muted sm">Agle login pe</span>'}</td><td>${badge(u.Active ? 'Active' : 'Inactive')}</td></tr>`).join('')}</tbody>
+        : '<span class="muted sm">Pehle login pe set hoga</span>'}</td><td>${badge(u.Active ? 'Active' : 'Inactive')}</td></tr>`).join('')}</tbody>
     </table></div></div>
     <div class="note" style="margin-top:14px"><b>Roles:</b> Owner — confirms cash and sees everything ·
       Admin — sees everything, manages settings · HR — takes cash, manages employee advances ·
       Employee — takes cash and records expenses.</div>`;
   $('#add', body).onclick = () => formUser(null, r.roles);
+  $$('[data-apr]', body).forEach(b => b.onclick = () => approveReq(pend[b.dataset.apr]));
+  $$('[data-rej]', body).forEach(b => b.onclick = async () => {
+    const p = pend[b.dataset.rej];
+    if (!await confirmBox('Reject request?', `${p.Name} (${p.EmpID}) ki request hata di jayegi. Wo dobara register kar sakta hai.`, 'Reject', true)) return;
+    if (await act(b, 'rejectUser', { empId: p.EmpID }, 'Request rejected')) refreshView();
+  });
   $$('[data-i]', body).forEach(tr => tr.onclick = () => formUser(r.rows[tr.dataset.i], r.roles));
   // Admin: show a PIN for 15 s (each look is logged on the server)
   $$('[data-pin]', body).forEach(b => b.onclick = async e => {
@@ -1540,10 +1622,34 @@ async function settingsUsers(body) {
   });
 }
 
-const EMP_ROLES = ['HR', 'Employee'];   // must be linked to the Employee Master
+const EMP_ROLES = ['HR', 'Employee'];          // must be linked to the Employee Master
+const PIN_ROLES = ['Owner', 'Admin', 'HR'];     // approvers: Emp ID / Login ID + PIN
+
+/* Self-register request approve: role chuno (HR ho toh PIN optional — warna pehle login pe khud set karega) */
+function approveReq(p) {
+  const box = dialog(`<div class="m-head"><div><div class="m-title">Approve user</div><div class="muted sm">${esc(p.Name)} · ${esc(p.EmpID)}</div></div></div>
+    <div class="form">
+      <label class="full">Role<select class="input" data-role>${opts(EMP_ROLES, 'Employee')}</select></label>
+      <label class="full hidden" data-pinrow>PIN <span class="muted sm">(optional)</span><input class="input" data-pin inputmode="numeric" maxlength="4" placeholder="Khaali chhodo — pehle login pe khud set karega" /></label>
+    </div>
+    <div class="m-actions"><button class="btn btn-ghost" data-no>Cancel</button><button class="btn btn-primary btn-auto" data-yes>Approve</button></div>`);
+  const sel = $('[data-role]', box), pinRow = $('[data-pinrow]', box), pin = $('[data-pin]', box);
+  sel.onchange = () => pinRow.classList.toggle('hidden', !PIN_ROLES.includes(sel.value));
+  $('[data-no]', box).onclick = closeDialog;
+  $('[data-yes]', box).onclick = async e => {
+    const v = PIN_ROLES.includes(sel.value) ? pin.value.trim() : '';
+    if (v && !/^\d{4}$/.test(v)) return toast('PIN must be 4 digits', false);
+    const r = await act(e.currentTarget, 'approveUser', { empId: p.EmpID, role: sel.value, pin: v }, 'User approved');
+    if (!r) return;
+    closeDialog();
+    const b = await call('bootstrap', {}, true);
+    if (b && b.ok) { S.persons = b.persons; S.personIds = b.personIds || {}; }
+    refreshView();
+  };
+}
 
 function formUser(u, roles) {
-  const isNew = !u, u0 = u || { Name: '', Role: 'Employee', Active: true, EmpID: '' };
+  const isNew = !u, u0 = u || { Name: '', Role: 'Employee', Active: true, EmpID: '', LoginID: '' };
   const empOpts = S.employees.map(e => `<option value="${esc(e.id)}" ${e.id === u0.EmpID ? 'selected' : ''}>${esc(e.name)} · ${esc(e.id)}${e.dept ? ' — ' + esc(e.dept) : ''}</option>`).join('');
   const box = openModal(`
     <div class="m-head"><div><div class="m-title">${isNew ? 'Add User' : 'Edit User'}</div>${isNew ? '' : `<div class="muted sm">${esc(u0.Name)}</div>`}</div><button class="x" data-close>&times;</button></div>
@@ -1554,26 +1660,36 @@ function formUser(u, roles) {
         <span class="hint">${isNew ? 'Name and Emp ID are taken from the Employee Master.' : 'Links this user to the employee; old entries get the Emp ID too.'}</span></label>
       <label class="full" id="nameRow">Name<input class="input" name="Name" maxlength="60" value="${esc(u0.Name)}" ${isNew ? '' : 'readonly'} />
         ${isNew ? '<span class="hint">Owner / Admin are not in the Employee Master — just type the name.</span>' : ''}</label>
-      <label class="full">PIN<input class="input" name="PIN" inputmode="numeric" maxlength="4" placeholder="${isNew ? '4 digits' : 'Leave blank to keep'}" /></label>
+      <label class="full" id="loginIdRow">Login ID<input class="input" name="LoginID" maxlength="30" value="${esc(u0.LoginID || '')}" placeholder="e.g. OWNER1, ADMIN" autocapitalize="characters" />
+        <span class="hint">Owner / Admin isi ID + PIN se login karenge (Emp ID ki jagah).</span></label>
+      <label class="full" id="pinRow">PIN<input class="input" name="PIN" inputmode="numeric" maxlength="4" placeholder="${isNew ? '4 digits' : 'Leave blank to keep'}" />
+        <span class="hint" id="pinHint"></span></label>
       ${isNew ? '' : `<label class="check full"><input type="checkbox" name="Active" ${u0.Active ? 'checked' : ''}/> Active (can log in)</label>`}
       <div class="m-actions full"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn btn-primary btn-auto">Save</button></div>
     </form>`);
   const form = $('form', box), roleSel = $('[name=Role]', form);
   const needsEmp = () => EMP_ROLES.includes(roleSel.value);
+  const needsPin = () => PIN_ROLES.includes(roleSel.value);
   const sync = () => {
     $('#empRow', box).classList.toggle('hidden', !needsEmp());
     $('#nameRow', box).classList.toggle('hidden', isNew && needsEmp());
+    $('#loginIdRow', box).classList.toggle('hidden', needsEmp());
+    $('#pinRow', box).classList.toggle('hidden', !needsPin());
+    $('#pinHint', box).textContent = roleSel.value === 'HR' ? 'Optional — khaali chhodo toh pehle login pe khud set karega.' : '';
   };
   roleSel.onchange = sync; sync();
   form.onsubmit = async e => {
     e.preventDefault();
     const rec = formData(form); rec.isNew = isNew;
     if (isNew) rec.Active = true;
-    if (!needsEmp()) rec.EmpID = '';
-    else if (isNew) rec.Name = '';
+    if (!needsEmp()) rec.EmpID = ''; else rec.LoginID = '';
+    if (needsEmp() && isNew) rec.Name = '';
+    if (!needsPin()) rec.PIN = '';
+    rec.LoginID = String(rec.LoginID || '').trim().toUpperCase();
     if (!isNew) rec.Name = u0.Name;
-    const err = (needsEmp() ? vReq(rec.EmpID, 'Employee') : vReq(rec.Name, 'Name')) ||
-      (isNew ? vReq(rec.PIN, 'PIN') : null) || (rec.PIN && !/^\d{4}$/.test(rec.PIN) ? 'PIN must be 4 digits' : null);
+    const ownerAdmin = !needsEmp();
+    const err = (needsEmp() ? vReq(rec.EmpID, 'Employee') : vReq(rec.Name, 'Name') || vReq(rec.LoginID, 'Login ID')) ||
+      (isNew && ownerAdmin ? vReq(rec.PIN, 'PIN') : null) || (rec.PIN && !/^\d{4}$/.test(rec.PIN) ? 'PIN must be 4 digits' : null);
     if (err) return toast(err, false);
     const r = await submit(form, 'saveUser', { record: JSON.stringify(rec) });
     if (!r) return;
@@ -1668,6 +1784,13 @@ async function saveCfg(btn) {
 
 /* =========================== Wire up =========================== */
 $('#loginBtn').onclick = doLogin;
+$('#loginId').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+$('#loginId').addEventListener('input', () => { $('#loginErr').textContent = ''; });
+$('#lgBack').onclick = e => { e.preventDefault(); showIdStep(); };
+$('#regLink').onclick = e => { e.preventDefault(); showReg(true); };
+$('#regBack').onclick = e => { e.preventDefault(); showReg(false); };
+$('#regBtn').onclick = doRegister;
+$('#regId').addEventListener('keydown', e => { if (e.key === 'Enter') doRegister(); });
 $('#pin').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 $('#pin').addEventListener('input', e => {
   e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4);
