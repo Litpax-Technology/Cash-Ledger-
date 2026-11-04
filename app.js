@@ -119,7 +119,6 @@ async function act(btn, action, params, okMsg) {
 
 /* bill upload — POST (too large for JSONP) */
 async function uploadBill(file) {
-  if (file.size > CONFIG.MAX_BILL_MB * 1024 * 1024) throw new Error('File is larger than ' + CONFIG.MAX_BILL_MB + ' MB');
   const { data, mime } = await prepareFile(file);
   const res = await fetch(CONFIG.API_URL, {
     method: 'POST',
@@ -131,29 +130,38 @@ async function uploadBill(file) {
 }
 
 function prepareFile(file) {
-  return new Promise((resolve, reject) => {
-    if (file.type === 'application/pdf') {
-      const fr = new FileReader();
-      fr.onload = () => resolve({ mime: 'application/pdf', data: String(fr.result).split(',')[1] });
-      fr.onerror = () => reject(new Error('Could not read file'));
-      fr.readAsDataURL(file);
-      return;
-    }
-    if (!/^image\//.test(file.type)) return reject(new Error('Only image or PDF bills are allowed'));
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      const max = CONFIG.BILL_MAX_PX;
-      let { width: w, height: h } = img;
-      if (w > max || h > max) { const k = max / Math.max(w, h); w = Math.round(w * k); h = Math.round(h * k); }
-      const c = document.createElement('canvas'); c.width = w; c.height = h;
-      c.getContext('2d').drawImage(img, 0, 0, w, h);
-      URL.revokeObjectURL(url);
-      resolve({ mime: 'image/jpeg', data: c.toDataURL('image/jpeg', 0.75).split(',')[1] });
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read image')); };
-    img.src = url;
+  const ext = (String(file.name || '').split('.').pop() || '').toLowerCase();
+  const mime = file.type || ({ heic: 'image/heic', heif: 'image/heif', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    png: 'image/png', webp: 'image/webp', pdf: 'application/pdf' })[ext] || '';
+  const raw = () => new Promise((resolve, reject) => {          // bina compress, original file
+    if (file.size > CONFIG.MAX_BILL_MB * 1024 * 1024) return reject(new Error('File ' + CONFIG.MAX_BILL_MB + ' MB se badi hai — camera quality kam karke dobara lo'));
+    const fr = new FileReader();
+    fr.onload = () => resolve({ mime, data: String(fr.result).split(',')[1] });
+    fr.onerror = () => reject(new Error('Could not read file'));
+    fr.readAsDataURL(file);
   });
+  if (mime === 'application/pdf') return raw();
+  if (!/^image\//.test(mime)) return Promise.reject(new Error('Only image or PDF bills are allowed'));
+  const toJpeg = (src, w, h) => {
+    const k = Math.min(1, CONFIG.BILL_MAX_PX / Math.max(w, h)), c = document.createElement('canvas');
+    c.width = Math.round(w * k); c.height = Math.round(h * k);
+    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+    return { mime: 'image/jpeg', data: c.toDataURL('image/jpeg', 0.75).split(',')[1] };
+  };
+  return (async () => {
+    try {                                                       // 1) naya tareeka — zyada formats, kam memory
+      if (window.createImageBitmap) { const b = await createImageBitmap(file); const o = toJpeg(b, b.width, b.height); if (b.close) b.close(); return o; }
+    } catch (e) {}
+    try {                                                       // 2) purana tareeka
+      return await new Promise((resolve, reject) => {
+        const img = new Image(), url = URL.createObjectURL(file);
+        img.onload = () => { URL.revokeObjectURL(url); resolve(toJpeg(img, img.naturalWidth, img.naturalHeight)); };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode')); };
+        img.src = url;
+      });
+    } catch (e) {}
+    return raw();                                               // 3) phone khol nahi paya (HEIC / badi photo) → original hi
+  })();
 }
 
 /* =========================== UI helpers =========================== */
