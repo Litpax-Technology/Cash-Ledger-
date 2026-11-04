@@ -1,7 +1,8 @@
 'use strict';
 /* Owner Cash Ledger — frontend logic (JSONP to Google Apps Script) */
 
-const ROLES = ['Owner', 'Admin', 'HR', 'Employee', 'Technician'];
+const ROLES = ['Owner', 'Admin', 'HR', 'Employee', 'Technician'];     // login ke baad server ki "Role List" se bharte hain
+const CASH_ROLES = ['Admin', 'HR', 'Employee', 'Technician'];            // "Cash leta hai" wale roles
 const S = { token: null, me: null, cfg: null, settings: null, persons: [], employees: [], view: null, params: {}, f: {} };
 
 /* =========================== Utilities =========================== */
@@ -533,8 +534,16 @@ function applyStartup(r) {
   S.me = r.me; S.cfg = r.config; S.settings = r.settings; S.persons = r.persons; S.employees = r.employees;
   S.personIds = r.personIds || {};
   S.mods = r.modules || {};                                // which modules this user can open
+  setRoles(r.roles);
   if (r.dash && r.dash.flow) { memoSet('dashboard', { from: r.dash.from, to: r.dash.to }, r.dash); setBadge(r.dash.live.pending); }
   if (r.mine) memoSet('listVouchers', { page: 1, status: '', mine: '1' }, r.mine);
+}
+
+/* server ki Role List → yahi arrays (in-place, kyunki NAV inhi ko refer karta hai) */
+function setRoles(x) {
+  if (!x) return;
+  const fill = (a, b) => { if (Array.isArray(b) && b.length) a.splice(0, a.length, ...b); };
+  fill(ROLES, x.all); fill(CASH_ROLES, x.cash); fill(EMP_ROLES, x.emp); fill(PIN_ROLES, x.pin);
 }
 
 function enterApp() {
@@ -543,7 +552,7 @@ function enterApp() {
   $('#who').innerHTML = `${avatar(S.me.name)}<span>${esc(S.me.name)}<small>${esc(S.me.role)}</small></span>`;
   buildNav();
   if (S.badge !== undefined) setBadge(S.badge);
-  go(isMgr() ? 'dashboard' : (role() === 'Technician' && S.mods.tickets && S.mods.tickets.see) ? 'tickets' : 'mycash');
+  go(isMgr() ? 'dashboard' : '');                                 // baaki: nav ka pehla tab (Technician → Tickets, Employee → My Cash)
   // warm the next screen in the background so it opens instantly
   if (isMgr()) call('approvals', {}, true).then(r => { if (r && r.ok) { memoSet('approvals', {}, r); setBadge(r.count); } });
 }
@@ -568,7 +577,7 @@ function logout() {
 const NAV = [
   { id: 'dashboard', label: 'Dashboard', roles: ['Owner', 'Admin'], render: viewDashboard },
   { id: 'approvals', label: 'Approvals', roles: ['Owner', 'Admin'], render: viewApprovals },
-  { id: 'mycash', label: 'My Cash', roles: ['Admin', 'HR', 'Employee', 'Technician'], render: viewMyCash },
+  { id: 'mycash', label: 'My Cash', roles: CASH_ROLES, render: viewMyCash },
   { id: 'vouchers', label: 'All Cash Entries', roles: ['Owner', 'Admin'], render: viewVouchers },
   { id: 'expenses', label: 'Expenses', roles: ['Owner', 'Admin'], render: viewExpenses },
   { id: 'ledger', label: 'Ledger', roles: ROLES, render: viewLedger },
@@ -1372,12 +1381,14 @@ async function viewSettings(el) {
   const f = S.f.settings = S.f.settings || { tab: 'users' };
   el.innerHTML = `<div class="tabs">
       <button class="tab ${f.tab === 'users' ? 'on' : ''}" data-tab="users">Users &amp; PINs</button>
+      <button class="tab ${f.tab === 'roles' ? 'on' : ''}" data-tab="roles">Roles</button>
       <button class="tab ${f.tab === 'lists' ? 'on' : ''}" data-tab="lists">Dropdown Lists</button>
       <button class="tab ${f.tab === 'general' ? 'on' : ''}" data-tab="general">General</button>
     </div><div id="sBody">${skel(5)}</div>`;
   $$('[data-tab]', el).forEach(t => t.onclick = () => { f.tab = t.dataset.tab; viewSettings(el); });
   const body = $('#sBody', el);
   if (f.tab === 'users') return settingsUsers(body);
+  if (f.tab === 'roles') return settingsRoles(body);
   const r = await call('configAll');
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
   S.cfgRows = r.rows;
@@ -1466,7 +1477,7 @@ function formUser(u, roles) {
     $('#nameRow', box).classList.toggle('hidden', isNew && needsEmp());
     $('#loginIdRow', box).classList.toggle('hidden', needsEmp());
     $('#pinRow', box).classList.toggle('hidden', !needsPin());
-    $('#pinHint', box).textContent = roleSel.value === 'HR' ? 'Optional — khaali chhodo toh pehle login pe khud set karega.' : '';
+    $('#pinHint', box).textContent = needsPin() && !['Owner', 'Admin'].includes(roleSel.value) ? 'Optional — khaali chhodo toh pehle login pe khud set karega.' : '';
   };
   roleSel.onchange = sync; sync();
   form.onsubmit = async e => {
@@ -1537,16 +1548,71 @@ function settingsLists(body) {
   draw();
 }
 
-/* role-access wale modules (default = backend MODULE_ROLES jaisa) */
-const MOD_ACCESS = [['tickets', 'Field Tickets'], ['advances', 'Employee Advances']];
-const MOD_DEFAULT = { tickets: ['Owner', 'Admin', 'Technician'], advances: ['HR'] };
-const modRoleList = (m, k) => Array.isArray(m[k]) ? m[k] : MOD_DEFAULT[k] || [];
+/* Settings → Roles: naya role + module access (dono Google Sheet ke "Role List" / "Roles" tab mein save) */
+const ROLE_TYPE_TXT = { Owner: 'Owner (fixed)', Admin: 'Admin (fixed)', Approver: 'Approver — Emp ID + PIN', Employee: 'Employee — sirf Emp ID' };
+async function settingsRoles(body) {
+  const r = await call('listRoles');
+  if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
+  const active = r.roles.filter(x => x.active).map(x => x.role);
+  body.innerHTML = `<div class="toolbar"><span class="muted">Naya role yahan se ya Google Sheet ke "Role List" tab se bana sakte ho.</span>
+      <span class="spacer"></span><button class="btn btn-primary btn-auto" id="addRole">+ Naya role</button></div>
+    <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Role</th><th>Type</th><th>Cash leta hai</th><th class="right">Users</th><th>Status</th></tr></thead>
+    <tbody>${r.roles.map((x, i) => `<tr ${x.fixed ? '' : `class="click" data-ri="${i}"`}><td><b>${esc(x.role)}</b>${x.fixed ? ' <span class="muted sm">fixed</span>' : ''}</td>
+      <td>${esc(ROLE_TYPE_TXT[x.type] || x.type)}</td><td>${x.cash ? '✓' : '—'}</td><td class="right">${x.users}</td><td>${badge(x.active ? 'Active' : 'Inactive')}</td></tr>`).join('')}</tbody>
+    </table></div></div>
+    <div class="card ov-sec"><div class="card-h">Module access <span class="muted">kaunsa module kis role ko dikhe · sheet ka "Roles" tab</span></div><div class="card-b">
+      <div class="tbl-wrap"><table class="tbl role-tbl"><thead><tr><th>Module</th>${active.map(x => `<th class="center">${esc(x)}</th>`).join('')}</tr></thead>
+      <tbody>${r.modules.map(m => `<tr><td><b>${esc(m.label)}</b></td>${active.map(x => `<td class="center"><input type="checkbox" data-mr="${esc(m.key)}" value="${esc(x)}"
+        aria-label="${esc(m.label)} · ${esc(x)}" ${m.roles.includes(x) ? 'checked' : ''}/></td>`).join('')}</tr>`).join('')}</tbody></table></div>
+      <div class="m-actions"><button class="btn btn-primary btn-auto" id="saveMr">Save module access</button></div>
+      <span class="hint">Owner ke core screens (Overview, Approvals) aur Admin ka Settings hamesha rahenge.</span></div></div>`;
+  $('#addRole', body).onclick = () => formRole(null, r.types);
+  $$('[data-ri]', body).forEach(tr => tr.onclick = () => formRole(r.roles[tr.dataset.ri], r.types));
+  $('#saveMr', body).onclick = async e => {
+    const map = {};
+    r.modules.forEach(m => { map[m.key] = $$(`[data-mr="${m.key}"]`, body).filter(c => c.checked).map(c => c.value); });
+    if (await act(e.currentTarget, 'saveModuleRoles', { map: JSON.stringify(map) }, 'Module access saved')) refreshRoles();
+  };
+}
+
+/* role / module badle → is user ka nav + role lists turant naye */
+async function refreshRoles() {
+  const b = await call('bootstrap', {}, true);
+  if (b && b.ok) { setRoles(b.roles); S.mods = b.modules || S.mods; buildNav(); }
+  refreshView();
+}
+
+function formRole(x, types) {
+  const isNew = !x, x0 = x || { role: '', type: 'Employee', cash: true, active: true, users: 0 };
+  const box = openModal(`
+    <div class="m-head"><div><div class="m-title">${isNew ? 'Naya role' : 'Edit role'}</div>${isNew ? '' : `<div class="muted sm">${esc(x0.role)} · ${x0.users} user</div>`}</div><button class="x" data-close>&times;</button></div>
+    <form class="form" novalidate>
+      <label class="full">Role ka naam<input class="input" name="Role" maxlength="20" value="${esc(x0.role)}" ${isNew ? '' : 'readonly'} placeholder="e.g. Store, Accounts" />
+        ${isNew ? '<span class="hint">2–20 letters. Baad mein naam nahi badlega.</span>' : ''}</label>
+      <label class="full">Type<select class="input" name="Type">${(types || ['Approver', 'Employee']).map(t => `<option value="${t}" ${t === x0.type ? 'selected' : ''}>${
+        t === 'Approver' ? 'Approver — Emp ID + PIN se login (HR jaisa)' : 'Employee — sirf Emp ID se login'}</option>`).join('')}</select></label>
+      <label class="check full"><input type="checkbox" name="Cash" ${x0.cash ? 'checked' : ''}/> Cash leta hai (My Cash, Cash Received, Expense)</label>
+      ${isNew ? '' : `<label class="check full"><input type="checkbox" name="Active" ${x0.active ? 'checked' : ''}/> Active (band karne se pehle iske users ka role badlo)</label>`}
+      <p class="hint full">Kaunsa module dikhe (Tickets, Advances…) — neeche "Module access" table se.</p>
+      <div class="m-actions full"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn btn-primary btn-auto">Save</button></div>
+    </form>`);
+  const form = $('form', box);
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const rec = { Role: $('[name=Role]', form).value.trim().replace(/\s+/g, ' '), Type: $('[name=Type]', form).value,
+      Cash: $('[name=Cash]', form).checked, Active: isNew ? true : $('[name=Active]', form).checked, isNew };
+    if (!/^[A-Za-z][A-Za-z ]{1,19}$/.test(rec.Role)) return toast('Role ka naam 2–20 letters ka ho (sirf A–Z aur space)', false);
+    if (/^(owner|admin)$/i.test(rec.Role)) return toast('Owner / Admin fixed roles hain', false);
+    const r = await submit(form, 'saveRole', { record: JSON.stringify(rec) });
+    if (!r) return;
+    closeModal(); toast(isNew ? 'Role "' + rec.Role + '" ban gaya' : 'Role saved'); refreshRoles();
+  };
+}
 
 function settingsGeneral(body) {
   const get = k => (S.cfgRows.find(r => r.type === 'Setting' && r.key === k) || {}).value || '';
   const purposes = S.cfgRows.filter(r => r.type === 'Purpose' && r.active).map(r => r.key);
   const scrapUsers = get('ScrapUsers').split('|').filter(Boolean);
-  let modRoles = {}; try { modRoles = JSON.parse(get('ModuleRoles') || '{}') || {}; } catch (e) {}
   body.innerHTML = `<div class="card" style="max-width:560px"><div class="card-b"><form class="form" novalidate>
       <label class="full">Overdue after (days)<input class="input" type="number" min="1" max="365" name="OverdueDays" value="${esc(get('OverdueDays') || 7)}" />
         <span class="hint">An Open entry with balance older than this is marked Overdue.</span></label>
@@ -1555,11 +1621,6 @@ function settingsGeneral(body) {
       <div class="full"><div class="lbl-plain">Scrap entry users</div>
         <div class="chk-grid">${S.persons.map(n => `<label class="check"><input type="checkbox" data-scrapuser value="${esc(n)}" ${scrapUsers.includes(n) ? 'checked' : ''}/> ${esc(n)}</label>`).join('') || '<span class="muted sm">No users yet</span>'}</div>
         <span class="hint">Sirf ye log Scrap Khata mein entry kar sakenge. Koi tick nahi = sab (Admin, HR, Employee). Owner aur Admin hamesha dekh sakte hain.</span></div>
-      <div class="full"><div class="lbl-plain">Role access — kaunsa module kis role ko dikhe</div>
-        <div class="tbl-wrap"><table class="tbl role-tbl"><thead><tr><th>Module</th>${ROLES.map(r => `<th class="center">${esc(r)}</th>`).join('')}</tr></thead>
-        <tbody>${MOD_ACCESS.map(([k, label]) => `<tr><td><b>${esc(label)}</b></td>${ROLES.map(r => `<td class="center">
-          <input type="checkbox" data-mr="${k}" value="${r}" aria-label="${esc(label)} · ${r}" ${modRoleList(modRoles, k).includes(r) ? 'checked' : ''}/></td>`).join('')}</tr>`).join('')}</tbody></table></div>
-        <span class="hint">Tick = us role ke logon ko ye tab dikhega. Owner ke core screens (Approvals, Overview) aur Admin ka Settings hamesha rahenge.</span></div>
       <div class="m-actions full"><button type="submit" class="btn btn-primary btn-auto">Save</button></div>
     </form></div></div>`;
   const form = $('form', body);
@@ -1569,9 +1630,7 @@ function settingsGeneral(body) {
     const od = Number(v.OverdueDays);
     if (!(od >= 1 && od <= 365)) return toast('Overdue days must be 1–365', false);
     v.ScrapUsers = $$('[data-scrapuser]', form).filter(c => c.checked).map(c => c.value).join('|');
-    const mr = {}; MOD_ACCESS.forEach(([k]) => { mr[k] = $$(`[data-mr="${k}"]`, form).filter(c => c.checked).map(c => c.value); });
-    v.ModuleRoles = JSON.stringify(mr);
-    ['OverdueDays', 'AdvancePurpose', 'ScrapUsers', 'ModuleRoles'].forEach(k => {
+    ['OverdueDays', 'AdvancePurpose', 'ScrapUsers'].forEach(k => {
       const row = S.cfgRows.find(r => r.type === 'Setting' && r.key === k);
       if (row) row.value = String(v[k]); else S.cfgRows.push({ type: 'Setting', key: k, value: String(v[k]), active: true });
     });
