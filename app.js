@@ -842,7 +842,7 @@ function waitingList(host) {
     if (!r || !r.ok) { host.innerHTML = errBox(); return bindRetry(host); }
     setBadge(r.count);
     const items = r.vouchers.map(v => ({ type: 'V', id: v.VoucherID, vid: v.VoucherID, person: v.Person, amt: v.Amount, what: 'Cash given · ' + vTitle(v) }))
-      .concat(r.returns.map(x => ({ type: 'R', id: x.ReturnID, vid: x.VoucherID, person: x.Person, amt: x.Amount, what: 'Cash returned · ' + x.VoucherID })))
+      .concat(r.returns.map(x => ({ type: 'R', id: x.ReturnID, vid: x.VoucherID, person: x.Person, amt: x.Amount, what: 'Cash returned · ' + (x.VoucherIDs || x.VoucherID) })))
       .concat((r.scrap || []).map(o => ({ type: 'S', id: o.EntryID, vid: '', person: o.Kisne, amt: o.Mila, what: 'Scrap ka cash · ' + o.EntryID })));
     if (!items.length) { host.innerHTML = emptyBox('All caught up — nothing is waiting'); return; }
     const own = isOwner();
@@ -885,7 +885,7 @@ async function viewApprovals(el) {
         '<tr><td colspan="7">' + emptyBox('Nothing to confirm') + '</td></tr>'}</tbody></table></div></div>
     <div class="card"><div class="card-h">Cash returned — waiting for confirmation <span class="muted">${r.returns.length}</span></div>
       <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Person</th><th>Entry</th><th class="right">Amount</th><th>Mode</th><th>Remarks</th><th></th></tr></thead>
-      <tbody>${r.returns.map(x => `<tr><td>${esc(x.Date)}</td><td>${who(x.Person, x.PersonEmpID || pid(x.Person))}</td><td><a href="#" data-v="${esc(x.VoucherID)}">${esc(x.VoucherID)}</a> · ${esc(vTitle(x))}</td>
+      <tbody>${r.returns.map(x => `<tr><td>${esc(x.Date)}</td><td>${who(x.Person, x.PersonEmpID || pid(x.Person))}</td><td><a href="#" data-v="${esc(x.VoucherID)}">${esc(x.VoucherIDs || x.VoucherID)}</a> · ${esc(vTitle(x))}</td>
         <td class="right"><b>${inr(x.Amount)}</b></td><td>${esc(x.Mode)}</td><td class="wrap">${esc(x.Remarks)}</td><td class="right">${btns('R', x.ReturnID)}</td></tr>`).join('') ||
         '<tr><td colspan="7">' + emptyBox('Nothing to confirm') + '</td></tr>'}</tbody></table></div></div>
     ${(r.scrap || []).length ? `<div class="card"><div class="card-h">Scrap ka cash — Owner tak pahunchna baaki <span class="muted">${r.scrap.length}</span></div>
@@ -919,20 +919,24 @@ async function viewMyCash(el) {
   const statuses = ['', 'Pending Confirm', 'Open', 'Closed', 'Rejected'];
   el.innerHTML = `<div class="toolbar">
       <div class="chips">${statuses.map(s => `<button class="chip ${f.status === s ? 'on' : ''}" data-status="${s}">${s || 'All'}</button>`).join('')}</div>
-      <span class="spacer"></span><button class="btn btn-ghost" id="quickExp">+ Expense</button>
+      <span class="spacer"></span><button class="btn btn-ghost" id="quickRet">Return Cash</button>
+      <button class="btn btn-ghost" id="quickExp">+ Expense</button>
       <button class="btn btn-primary btn-auto" id="newCash">+ Cash Received</button>
     </div><div id="mcBody">${skel(4)}</div>`;
   $$('[data-status]', el).forEach(c => c.onclick = () => { f.status = c.dataset.status; f.page = 1; viewMyCash(el); });
   $('#newCash', el).onclick = formVoucher;
   $('#quickExp', el).onclick = () => quickExpense(S.openList);
+  $('#quickRet', el).onclick = () => formReturn(null);
   $('#fab').onclick = () => {
     const box = openModal(`<div class="m-head"><div><div class="m-title">What do you want to add?</div></div><button class="x" data-close>&times;</button></div>
       <div class="pick-list">
         <button class="pick" data-a="cash"><span><b>Cash Received</b><small>Owner gave you cash</small></span><span class="right">→</span></button>
         <button class="pick" data-a="exp"><span><b>Expense</b><small>You paid from the cash you hold</small></span><span class="right">→</span></button>
+        <button class="pick" data-a="ret"><span><b>Return Cash</b><small>Give unused cash back to the Owner</small></span><span class="right">→</span></button>
       </div>`);
     $('[data-a="cash"]', box).onclick = formVoucher;
     $('[data-a="exp"]', box).onclick = () => quickExpense(S.openList);
+    $('[data-a="ret"]', box).onclick = () => formReturn(null);
   };
 
   load('listVouchers', { page: f.page, status: f.status, mine: '1' }, r => {
@@ -940,6 +944,7 @@ async function viewMyCash(el) {
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
   const s = r.summary;
   S.openList = r.openList || [];
+  S.myCash = s;                                    // expense / return form isi "Cash in hand" se chalenge
   const sub = `<b>${inr(s.cashInHand)}</b> cash in hand · ${s.open} open entr${s.open === 1 ? 'y' : 'ies'}` +
     (s.pending ? ` · <b>${s.pending}</b> waiting for Owner` : '') + (s.overdue ? ` · <span class="neg">${s.overdue} overdue</span>` : '');
   body.innerHTML = `${helloCard(sub)}<div class="kpis">
@@ -951,11 +956,6 @@ async function viewMyCash(el) {
     <div class="vlist">${r.rows.map(vCard).join('') || emptyBox('No entries yet. Tap "Cash Received" when the Owner gives you cash.')}</div>
     ${pager(r)}`;
   $$('[data-v]', body).forEach(c => c.onclick = () => openVoucher(c.dataset.v));
-  $$('[data-add]', body).forEach(b => b.onclick = e => {
-    e.stopPropagation();
-    const v = r.rows.find(x => x.VoucherID === b.dataset.add);
-    formExpense(v);
-  });
   bindPager(body, p => { f.page = p; viewMyCash(el); });
   animateNums(body, 'mycash');
   }, $('#mcBody', el));
@@ -971,21 +971,13 @@ function vCard(v) {
       <div><span>Returned</span><b>${inr(v.Returned)}</b></div><div><span>Balance</span><b class="${num(v.Balance) < 0 ? 'neg' : ''}">${inr(v.Balance)}</b></div></div>
     <div class="progress"><span style="width:${used.toFixed(1)}%"></span></div>
     ${v.Status === 'Rejected' && v.RejectReason ? `<div class="note bad" style="margin:10px 0 0">Rejected: ${esc(v.RejectReason)}</div>` : ''}
-    ${v.Status === 'Open' && v.Person === S.me.name ? `<div class="vc-foot"><button class="btn btn-ghost btn-sm" data-add="${esc(v.VoucherID)}">+ Expense</button></div>` : ''}
   </div>`;
 }
 
-/* "+ Expense" from the toolbar: pick the open entry (or go straight in if there is one) */
+/* "+ Expense": seedha form — overall cash in hand se (backend purani entry se pehle kaatega) */
 function quickExpense(list) {
   if (!list || !list.length) return toast('No open entry yet. Add "Cash Received" and wait for Owner confirmation.', false);
-  const go1 = v => formExpense(v);
-  if (list.length === 1) return go1(list[0]);
-  const box = openModal(`<div class="m-head"><div><div class="m-title">Add expense to</div>
-      <div class="muted sm">Choose the cash entry this expense was paid from</div></div><button class="x" data-close>&times;</button></div>
-    <div class="pick-list">${list.map(v => `<button class="pick" data-v="${esc(v.VoucherID)}">
-      <span><b>${esc(vTitle(v))}</b><small>${esc(v.VoucherID)} · ${esc(v.Date)}</small></span>
-      <span class="right"><small>Balance</small><b>${inr(v.Balance)}</b></span></button>`).join('')}</div>`);
-  $$('[data-v]', box).forEach(b => b.onclick = () => go1(list.find(x => x.VoucherID === b.dataset.v)));
+  formExpense(null);
 }
 
 /* =========================== All cash entries (Owner/Admin) =========================== */
@@ -1046,7 +1038,8 @@ function renderVoucher(box, r, id) {
   const own = v.Person === S.me.name;
   const isOpen = v.Status === 'Open', isPending = v.Status === 'Pending Confirm';
   const pendRet = r.returns.filter(x => x.Status === 'Pending Confirm');
-  const canDelExp = isOpen && (own || isAdmin());
+  const autoClosed = v.Status === 'Closed' && String(v.ClosedBy || '').indexOf('Auto') === 0;
+  const canDelExp = (isOpen || autoClosed) && (own || isAdmin());
 
   const actions = [];
   if (isOwner() && isPending) actions.push('<button class="btn btn-danger" data-a="reject">Reject</button>', '<button class="btn btn-ok" data-a="confirm">Confirm cash given</button>');
@@ -1117,10 +1110,10 @@ function renderVoucher(box, r, id) {
     if (!(await confirmBox('Cancel entry', 'This entry will be removed. Continue?', 'Cancel entry', true))) return;
     if (await act(btn, 'cancelVoucher', { id })) { toast('Entry cancelled'); closeModal(); refreshView(); refreshBadge(); }
   };
-  if (A('expense')) A('expense').onclick = () => formExpense(v);
-  if (A('return')) A('return').onclick = () => formReturn(v, sum(pendRet, 'Amount'));
+  if (A('expense')) A('expense').onclick = () => formExpense(null);     // overall cash in hand
+  if (A('return')) A('return').onclick = () => formReturn(null);
   $$('[data-del]', box).forEach(b => b.onclick = async () => {
-    if (!(await confirmBox('Remove expense', 'This expense will be removed from the entry.', 'Remove', true))) return;
+    if (!(await confirmBox('Remove expense', 'This expense will be removed (agar ye 2 entries mein bata tha toh dono hissa).', 'Remove', true))) return;
     { const x = await act(b, 'deleteExpense', { id: b.dataset.del }); if (x) done('Expense removed', x); }
   });
   $$('[data-rok]', box).forEach(b => b.onclick = async () => {
@@ -1158,15 +1151,15 @@ function formVoucher() {
   };
 }
 
-function formExpense(v) {
-  const key = 'exp_' + v.VoucherID, d = getDraft(key);
-  let ref = d.ClientRef || uid(), bal = num(v.Balance), up = null, more = false;
+function formExpense(v) {                        // v = null → overall cash in hand (pool)
+  const key = v ? 'exp_' + v.VoucherID : 'exp_pool', d = getDraft(key);
+  let ref = d.ClientRef || uid(), bal = v ? num(v.Balance) : num(S.myCash && S.myCash.cashInHand) - num(S.myCash && S.myCash.payable), up = null, more = false;
   const adv = S.settings.advancePurpose;
   const purposes = S.cfg.Purpose.filter(p => p !== adv || isAdvMgr());
   const empOpts = S.employees.map(e => `<option value="${esc(e.id)}" ${e.id === d.EmpID ? 'selected' : ''}>${esc(e.name)}${e.id.indexOf('ROW-') ? ' · ' + esc(e.id) : ''}${e.dept ? ' — ' + esc(e.dept) : ''}</option>`).join('');
   const box = openModal(`
     <div class="m-head"><div><div class="m-title">Add Expense</div>
-      <div class="muted sm">${esc(v.VoucherID)} · ${esc(vTitle(v))} · Balance <b id="expBal">${inr(bal)}</b></div></div><button class="x" data-close>&times;</button></div>
+      <div class="muted sm">${v ? esc(v.VoucherID) + ' · ' + esc(vTitle(v)) + ' · Balance' : 'Cash in hand'} <b id="expBal">${inr(bal)}</b></div></div><button class="x" data-close>&times;</button></div>
     <form class="form" novalidate>
       <label>Date<input class="input" type="date" name="Date" max="${today()}" value="${esc(d.Date || today())}" /></label>
       <label>Amount (₹)<input class="input" type="number" name="Amount" inputmode="decimal" min="1" step="0.01" value="${esc(d.Amount || '')}" placeholder="0" /></label>
@@ -1207,7 +1200,7 @@ function formExpense(v) {
       return url;
     }).catch(er => {
       job.err = er;
-      if (up === job) { pick.classList.remove('has'); pickTxt.textContent = 'Upload failed — tap to choose again'; }
+      if (up === job) { pick.classList.remove('has'); pickTxt.textContent = 'Upload failed: ' + er.message + ' — tap to choose again'; }
       throw er;
     });
     job.promise.catch(() => {});
@@ -1218,7 +1211,7 @@ function formExpense(v) {
   form.onsubmit = async e => {
     e.preventDefault();
     if (form.dataset.busy === '1') return;
-    const rec = formData(form); rec.VoucherID = v.VoucherID; rec.ClientRef = ref;
+    const rec = formData(form); if (v) rec.VoucherID = v.VoucherID; rec.ClientRef = ref;
     const advance = rec.Purpose === adv;
     if (advance) rec.PaidTo = ''; else rec.EmpID = '';
     const needSub = !advance && subsOf(rec.Purpose).length > 0;
@@ -1245,10 +1238,11 @@ function formExpense(v) {
     clearDraft(key);
     toast(advance ? 'Advance recorded in employee khata' : 'Expense saved');
     refreshView();
-    if (r.detail) memoSet('voucherDetail', { id: v.VoucherID }, r.detail);
-    if (!more) return openVoucher(v.VoucherID, r.detail);
+    if (v && r.detail) memoSet('voucherDetail', { id: v.VoucherID }, r.detail);
+    if (!more) return v ? openVoucher(v.VoucherID, r.detail) : closeModal();
     // keep the form open for the next expense
     bal = num(r.balance != null ? r.balance : bal - num(rec.Amount));
+    if (!v && S.myCash) { S.myCash.cashInHand = Math.max(0, bal); S.myCash.payable = Math.max(0, -bal); }
     $('#expBal', box).textContent = inr(bal);
     ref = uid();
     ['Amount', 'PaidTo', 'Description', 'EmpID'].forEach(n => { const f = $(`[name=${n}]`, form); if (f) f.value = ''; });   // purpose stays for the next one
@@ -1257,13 +1251,14 @@ function formExpense(v) {
   };
 }
 
-function formReturn(v, pendingAmt) {
-  const key = 'ret_' + v.VoucherID, d = getDraft(key), ref = d.ClientRef || uid();
-  const max = Math.round((num(v.Balance) - pendingAmt) * 100) / 100;
+function formReturn(v, pendingAmt) {               // v = null → overall cash in hand (pool)
+  const key = v ? 'ret_' + v.VoucherID : 'ret_pool', d = getDraft(key), ref = d.ClientRef || uid();
+  if (!v) pendingAmt = num(S.myCash && S.myCash.pendingReturn);
+  const max = Math.round(((v ? num(v.Balance) : num(S.myCash && S.myCash.cashInHand)) - pendingAmt) * 100) / 100;
   if (max <= 0) return toast(pendingAmt ? 'A return is already waiting for confirmation' : 'No balance left to return', false);
   const box = openModal(`
     <div class="m-head"><div><div class="m-title">Return Cash to Owner</div>
-      <div class="muted sm">${esc(v.VoucherID)} · You can return up to ${inr(max)}</div></div><button class="x" data-close>&times;</button></div>
+      <div class="muted sm">${v ? esc(v.VoucherID) + ' · ' : 'Cash in hand · '}You can return up to ${inr(max)}</div></div><button class="x" data-close>&times;</button></div>
     <form class="form" novalidate>
       <label>Date<input class="input" type="date" name="Date" max="${today()}" value="${esc(d.Date || today())}" /></label>
       <label>Amount (₹)<input class="input" type="number" name="Amount" inputmode="decimal" min="1" max="${max}" step="0.01" value="${esc(d.Amount || max)}" /></label>
@@ -1276,12 +1271,13 @@ function formReturn(v, pendingAmt) {
   trackDraft(form, key, ref);
   form.onsubmit = async e => {
     e.preventDefault();
-    const rec = formData(form); rec.VoucherID = v.VoucherID; rec.ClientRef = ref;
+    const rec = formData(form); if (v) rec.VoucherID = v.VoucherID; rec.ClientRef = ref;
     const err = vDate(rec.Date) || vMoney(rec.Amount) || (num(rec.Amount) > max ? 'Amount cannot be more than ' + inr(max) : null) || vReq(rec.Mode, 'Mode');
     if (err) return toast(err, false);
     const r = await submit(form, 'addReturn', { record: JSON.stringify(rec) });
     if (!r) return;
-    clearDraft(key); toast('Return sent to Owner for confirmation'); refreshView(); refreshBadge(); openVoucher(v.VoucherID, r.detail);
+    clearDraft(key); toast('Return sent to Owner for confirmation'); refreshView(); refreshBadge();
+    if (v) openVoucher(v.VoucherID, r.detail); else closeModal();
   };
 }
 
@@ -1582,33 +1578,19 @@ async function viewSettings(el) {
 async function settingsUsers(body) {
   const r = await call('listUsers');
   if (!r || !r.ok) { body.innerHTML = errBox(); return bindRetry(body); }
-  const pend = r.pending || [];
-  body.innerHTML = `${pend.length ? `<div class="card req-card"><div class="card-h">New user requests <span class="badge b-pending">${pend.length}</span>
-        <span class="muted">Emp ID se khud register kiya</span></div>
-      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Emp ID</th><th>Department</th><th>Requested</th><th class="right">Action</th></tr></thead>
-      <tbody>${pend.map((p, i) => `<tr><td>${who(p.Name, p.EmpID)}</td><td>${esc(p.EmpID)}</td><td>${esc(p.Department || '—')}</td><td>${esc(p.RequestedAt || '')}</td>
-        <td class="right nowrap"><button class="btn btn-ghost btn-sm" data-rej="${i}">Reject</button>
-          <button class="btn btn-primary btn-sm btn-auto" data-apr="${i}">Approve</button></td></tr>`).join('')}</tbody>
-      </table></div></div>` : ''}
-    <div class="toolbar"><span class="muted">Employee sirf Emp ID se login karta hai · HR / Owner / Admin ko PIN bhi lagta hai.</span>
+  body.innerHTML = `<div class="toolbar"><span class="muted">Every person who takes cash from the Owner needs a user with a PIN.</span>
       <span class="spacer"></span><button class="btn btn-primary btn-auto" id="add">+ Add User</button></div>
-    <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Emp ID / Login ID</th><th>Role</th><th>PIN</th><th>Status</th></tr></thead>
+    <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Emp ID</th><th>Role</th><th>PIN</th><th>Status</th></tr></thead>
     <tbody>${r.rows.map((u, i) => `<tr class="click" data-i="${i}"><td>${who(u.Name)}</td>
-      <td>${u.EmpID ? esc(u.EmpID) : u.LoginID ? `${esc(u.LoginID)} <span class="muted sm">login ID</span>` : (EMP_ROLES.includes(u.Role) ? '<span class="badge b-rejected">Not linked</span>' : '<span class="badge b-rejected">No login ID</span>')}</td>
-      <td>${esc(u.Role)}</td><td>${!PIN_ROLES.includes(u.Role) ? '<span class="muted sm">Not needed</span>' : u.HasPin
+      <td>${u.EmpID ? esc(u.EmpID) : (EMP_ROLES.includes(u.Role) ? '<span class="badge b-rejected">Not linked</span>' : '<span class="muted">—</span>')}</td>
+      <td>${esc(u.Role)}</td><td>${u.HasPin
         ? `<span class="pin-cell"><b data-pinv>••••</b><button class="icon-btn pin-eye" title="PIN dekho" aria-label="Show PIN of ${esc(u.Name)}" data-pin="${esc(u.Name)}"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></span>`
-        : '<span class="muted sm">Pehle login pe set hoga</span>'}</td><td>${badge(u.Active ? 'Active' : 'Inactive')}</td></tr>`).join('')}</tbody>
+        : '<span class="muted sm">Agle login pe</span>'}</td><td>${badge(u.Active ? 'Active' : 'Inactive')}</td></tr>`).join('')}</tbody>
     </table></div></div>
     <div class="note" style="margin-top:14px"><b>Roles:</b> Owner — confirms cash and sees everything ·
       Admin — sees everything, manages settings · HR — takes cash, manages employee advances ·
       Employee — takes cash and records expenses.</div>`;
   $('#add', body).onclick = () => formUser(null, r.roles);
-  $$('[data-apr]', body).forEach(b => b.onclick = () => approveReq(pend[b.dataset.apr]));
-  $$('[data-rej]', body).forEach(b => b.onclick = async () => {
-    const p = pend[b.dataset.rej];
-    if (!await confirmBox('Reject request?', `${p.Name} (${p.EmpID}) ki request hata di jayegi. Wo dobara register kar sakta hai.`, 'Reject', true)) return;
-    if (await act(b, 'rejectUser', { empId: p.EmpID }, 'Request rejected')) refreshView();
-  });
   $$('[data-i]', body).forEach(tr => tr.onclick = () => formUser(r.rows[tr.dataset.i], r.roles));
   // Admin: show a PIN for 15 s (each look is logged on the server)
   $$('[data-pin]', body).forEach(b => b.onclick = async e => {
