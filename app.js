@@ -41,8 +41,9 @@ function jsonp(action, params = {}) {
   return new Promise((resolve, reject) => {
     const cb = 'jp_' + Math.random().toString(36).slice(2);
     const s = document.createElement('script');
-    const timer = setTimeout(() => { cleanup(); reject(new Error('timeout')); }, CONFIG.TIMEOUT_MS);
-    function cleanup() { clearTimeout(timer); delete window[cb]; s.remove(); }
+    const timer = setTimeout(() => { cleanup(true); reject(new Error('timeout')); }, CONFIG.TIMEOUT_MS);
+    // late jawab aaye toh "jp_… is not defined" error na aaye — khaali callback chhod do
+    function cleanup(late) { clearTimeout(timer); if (late) window[cb] = () => { delete window[cb]; }; else delete window[cb]; s.remove(); }
     window[cb] = res => { cleanup(); resolve(res); };
     const qs = Object.keys(params).filter(k => params[k] !== undefined && params[k] !== null)
       .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k])).join('&');
@@ -53,10 +54,22 @@ function jsonp(action, params = {}) {
   });
 }
 
+/* sirf padhne wali actions — inhe timeout pe ek baar dobara bhejna safe hai */
+const READ_ACTIONS = ['bootstrap', 'dashboard', 'approvals', 'listVouchers', 'voucherDetail', 'listExpenses', 'ledger',
+  'listAdvances', 'advanceDetail', 'employeeAdvances', 'listEmployees', 'listUsers', 'configAll', 'listRoles',
+  'ticketList', 'ticketDetail', 'scrapBoot', 'scrapKhata', 'scrapSummary'];
+async function jsonpRetry(action, params) {
+  try { return await jsonp(action, params); }
+  catch (e) {
+    if (READ_ACTIONS.indexOf(action) === -1) throw e;
+    return jsonp(action, params);                       // ek baar aur (server pehli baar slow tha)
+  }
+}
+
 /* returns: response object (check .ok) or null on network failure */
 async function call(action, params = {}, quiet = false) {
   try {
-    const r = await jsonp(action, params);
+    const r = await jsonpRetry(action, params);
     if (r && r.error === 'AUTH') { toast(r.message || 'Session expired', false); logout(); return null; }
     if (!r || !r.ok) { if (!quiet) toast((r && r.message) || 'Something went wrong', false); return r || null; }
     return r;
@@ -1617,7 +1630,6 @@ function settingsGeneral(body) {
         <span class="hint">An Open entry with balance older than this is marked Overdue.</span></label>
       <label class="full">Employee advance purpose<select class="input" name="AdvancePurpose">${opts(purposes, get('AdvancePurpose'))}</select>
         <span class="hint">Cash taken for this purpose is given to employees as advance; only HR/Admin can use it.</span></label>
-
       <div class="m-actions full"><button type="submit" class="btn btn-primary btn-auto">Save</button></div>
     </form></div></div>`;
   const form = $('form', body);
