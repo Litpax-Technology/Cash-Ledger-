@@ -2,7 +2,7 @@
 const CACHE = 'cash-ledger-v18';
 const FONTS = 'cash-ledger-fonts-v1';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'icon.svg',
-               'icon-48.png', 'logo-white.png', 'logo-dark.png', 'modules/scrap.js'];
+               'icon-48.png', 'logo-white.png', 'logo-dark.png', 'modules/scrap.js', 'modules/advances.js', 'modules/tickets.js'];
 
 self.addEventListener('install', e => {
   // one missing file must not block the update, so each file is cached on its own
