@@ -1,6 +1,6 @@
 // Owner Cash Ledger — app configuration (only constants here)
 const CONFIG = {
-  API_URL: 'https://script.google.com/macros/s/AKfycbylAXqCq5c6rXfxFvm68GV135HIU0G7kN8MJu91aCppcETFbfZH8piysA6KCvlxaUTG/exec',
+  API_URL: 'https://script.google.com/macros/s/AKfycbzykFtEDbLjYfNuF9Q952gqGvKQ1w8JEgbKZTDbPwUeC33wHKE09HmL48ZwOu7YsiE4/exec',
   APP_NAME: 'Cash Ledger',
   COMPANY: 'Litpax Technology',
   MAX_BILL_MB: 8,        // max bill file size before compression
