@@ -1612,15 +1612,12 @@ function formRole(x, types) {
 function settingsGeneral(body) {
   const get = k => (S.cfgRows.find(r => r.type === 'Setting' && r.key === k) || {}).value || '';
   const purposes = S.cfgRows.filter(r => r.type === 'Purpose' && r.active).map(r => r.key);
-  const scrapUsers = get('ScrapUsers').split('|').filter(Boolean);
   body.innerHTML = `<div class="card" style="max-width:560px"><div class="card-b"><form class="form" novalidate>
       <label class="full">Overdue after (days)<input class="input" type="number" min="1" max="365" name="OverdueDays" value="${esc(get('OverdueDays') || 7)}" />
         <span class="hint">An Open entry with balance older than this is marked Overdue.</span></label>
       <label class="full">Employee advance purpose<select class="input" name="AdvancePurpose">${opts(purposes, get('AdvancePurpose'))}</select>
         <span class="hint">Cash taken for this purpose is given to employees as advance; only HR/Admin can use it.</span></label>
-      <div class="full"><div class="lbl-plain">Scrap entry users</div>
-        <div class="chk-grid">${S.persons.map(n => `<label class="check"><input type="checkbox" data-scrapuser value="${esc(n)}" ${scrapUsers.includes(n) ? 'checked' : ''}/> ${esc(n)}</label>`).join('') || '<span class="muted sm">No users yet</span>'}</div>
-        <span class="hint">Sirf ye log Scrap Khata mein entry kar sakenge. Koi tick nahi = sab (Admin, HR, Employee). Owner aur Admin hamesha dekh sakte hain.</span></div>
+
       <div class="m-actions full"><button type="submit" class="btn btn-primary btn-auto">Save</button></div>
     </form></div></div>`;
   const form = $('form', body);
@@ -1629,8 +1626,7 @@ function settingsGeneral(body) {
     const v = formData(form);
     const od = Number(v.OverdueDays);
     if (!(od >= 1 && od <= 365)) return toast('Overdue days must be 1–365', false);
-    v.ScrapUsers = $$('[data-scrapuser]', form).filter(c => c.checked).map(c => c.value).join('|');
-    ['OverdueDays', 'AdvancePurpose', 'ScrapUsers'].forEach(k => {
+    ['OverdueDays', 'AdvancePurpose'].forEach(k => {
       const row = S.cfgRows.find(r => r.type === 'Setting' && r.key === k);
       if (row) row.value = String(v[k]); else S.cfgRows.push({ type: 'Setting', key: k, value: String(v[k]), active: true });
     });
