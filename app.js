@@ -54,22 +54,10 @@ function jsonp(action, params = {}) {
   });
 }
 
-/* sirf padhne wali actions — inhe timeout pe ek baar dobara bhejna safe hai */
-const READ_ACTIONS = ['bootstrap', 'dashboard', 'approvals', 'listVouchers', 'voucherDetail', 'listExpenses', 'ledger',
-  'listAdvances', 'advanceDetail', 'employeeAdvances', 'listEmployees', 'listUsers', 'configAll', 'listRoles',
-  'ticketList', 'ticketDetail', 'scrapBoot', 'scrapKhata', 'scrapSummary'];
-async function jsonpRetry(action, params) {
-  try { return await jsonp(action, params); }
-  catch (e) {
-    if (READ_ACTIONS.indexOf(action) === -1) throw e;
-    return jsonp(action, params);                       // ek baar aur (server pehli baar slow tha)
-  }
-}
-
 /* returns: response object (check .ok) or null on network failure */
 async function call(action, params = {}, quiet = false) {
   try {
-    const r = await jsonpRetry(action, params);
+    const r = await jsonp(action, params);
     if (r && r.error === 'AUTH') { toast(r.message || 'Session expired', false); logout(); return null; }
     if (!r || !r.ok) { if (!quiet) toast((r && r.message) || 'Something went wrong', false); return r || null; }
     return r;
