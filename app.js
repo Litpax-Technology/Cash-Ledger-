@@ -44,7 +44,11 @@ function jsonp(action, params = {}) {
     const timer = setTimeout(() => { cleanup(true); reject(new Error('timeout')); }, CONFIG.TIMEOUT_MS);
     // late jawab aaye toh "jp_… is not defined" error na aaye — khaali callback chhod do
     function cleanup(late) { clearTimeout(timer); if (late) window[cb] = () => { delete window[cb]; }; else delete window[cb]; s.remove(); }
-    window[cb] = res => { cleanup(); resolve(res); };
+    window[cb] = res => {
+      cleanup();
+      if (res && res.newToken && S.token) { S.token = res.newToken; store.set('session', { token: S.token, me: S.me }); }   // Owner/Admin auto-renew
+      resolve(res);
+    };
     const qs = Object.keys(params).filter(k => params[k] !== undefined && params[k] !== null)
       .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k])).join('&');
     s.src = CONFIG.API_URL + '?action=' + action + '&callback=' + cb +
