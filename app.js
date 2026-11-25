@@ -374,6 +374,42 @@ function askText(title, label, required = true, okLabel = 'Submit') {
   });
 }
 
+/* Partial confirm: Owner kam amount approve kare (voucher ke liye "kisne diya" bhi) */
+function askPartial(title, full, needGivenBy) {
+  return new Promise(resolve => {
+    const list = CONFIG.OWNERS || [];
+    const box = dialog(`<div class="m-head"><div class="m-title">Partial confirm · ${esc(title)}</div></div>
+      <div class="form">
+        <label class="full">Requested<input class="input" value="${inr(full)}" disabled></label>
+        <label class="full">Approve amount (₹)<input class="input" type="number" inputmode="decimal" min="1" max="${num(full) - 0.01}" step="0.01" data-amt></label>
+        ${needGivenBy ? `<label class="full">Given by<select class="input" data-gb><option value="">Select owner</option>${list.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}</select></label>` : ''}
+        <label class="full">Reason / note<textarea class="input" rows="2" maxlength="300" data-note></textarea></label>
+      </div>
+      <div class="m-actions"><button class="btn btn-ghost" data-no>Cancel</button>
+      <button class="btn btn-ok btn-auto" data-yes>Approve partly</button></div>`);
+    $('[data-amt]', box).focus();
+    $('[data-no]', box).onclick = () => { closeDialog(); resolve(null); };
+    $('[data-yes]', box).onclick = () => {
+      const amount = Number($('[data-amt]', box).value), note = $('[data-note]', box).value.trim();
+      const givenBy = needGivenBy ? $('[data-gb]', box).value : '';
+      if (!(amount > 0) || amount >= num(full)) return toast('Amount 0 se zyada aur ' + inr(full) + ' se kam hona chahiye', false);
+      if (needGivenBy && !givenBy) return toast('Select who gave the cash', false);
+      if (!note) return toast('Reason is required', false);
+      closeDialog(); resolve({ amount, note, givenBy });
+    };
+  });
+}
+
+async function partialConfirm(type, id, full, btn) {
+  const p = await askPartial(type === 'V' ? 'Cash given' : 'Cash returned', full, type === 'V');
+  if (!p) return null;
+  const params = { id, decision: 'confirm', amount: p.amount, partialNote: p.note };
+  if (type === 'V') params.givenBy = p.givenBy;
+  const x = await act(btn, CONFIRM_ACTION[type], params, 'Partly confirmed');
+  if (x) { refreshView(); refreshBadge(); }
+  return x;
+}
+
 /* Owner confirm: kis owner ne cash diya — returns name or null */
 function askGivenBy() {
   return new Promise(resolve => {
@@ -892,19 +928,20 @@ async function viewApprovals(el) {
   if (!r || !r.ok) { el.innerHTML = errBox(); return bindRetry(el); }
   setBadge(r.count);
   const canAct = isOwner();
-  const btns = (type, id) => canAct ? `<button class="btn btn-ok btn-sm" data-ok="${type}|${esc(id)}">Confirm</button>
+  const btns = (type, id, amt) => canAct ? `<button class="btn btn-ok btn-sm" data-ok="${type}|${esc(id)}">Confirm</button>
+    ${amt ? `<button class="btn btn-ghost btn-sm" data-part="${type}|${esc(id)}|${num(amt)}">Partial</button>` : ''}
     <button class="btn btn-danger btn-sm" data-rej="${type}|${esc(id)}">Reject</button>` : '<span class="muted sm">Owner confirms</span>';
   el.innerHTML = `
     ${!canAct ? '<div class="note">Only the Owner can confirm or reject. You can view pending items here.</div>' : ''}
     <div class="card"><div class="card-h">Cash given — waiting for confirmation <span class="muted">${r.vouchers.length}</span></div>
       <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Person</th><th>Purpose</th><th class="right">Amount</th><th>Mode</th><th>Remarks</th><th></th></tr></thead>
       <tbody>${r.vouchers.map(v => `<tr><td>${esc(v.Date)}</td><td>${who(v.Person, v.PersonEmpID || pid(v.Person))}</td><td>${esc(vTitle(v))}</td>
-        <td class="right"><b>${inr(v.Amount)}</b></td><td>${esc(v.Mode)}</td><td class="wrap">${esc(v.Remarks)}</td><td class="right">${btns('V', v.VoucherID)}</td></tr>`).join('') ||
+        <td class="right"><b>${inr(v.Amount)}</b></td><td>${esc(v.Mode)}</td><td class="wrap">${esc(v.Remarks)}</td><td class="right">${btns('V', v.VoucherID, v.Amount)}</td></tr>`).join('') ||
         '<tr><td colspan="7">' + emptyBox('Nothing to confirm') + '</td></tr>'}</tbody></table></div></div>
     <div class="card"><div class="card-h">Cash returned — waiting for confirmation <span class="muted">${r.returns.length}</span></div>
       <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Person</th><th>Entry</th><th class="right">Amount</th><th>Mode</th><th>Remarks</th><th></th></tr></thead>
       <tbody>${r.returns.map(x => `<tr><td>${esc(x.Date)}</td><td>${who(x.Person, x.PersonEmpID || pid(x.Person))}</td><td><a href="#" data-v="${esc(x.VoucherID)}">${esc(x.VoucherIDs || x.VoucherID)}</a> · ${esc(vTitle(x))}</td>
-        <td class="right"><b>${inr(x.Amount)}</b></td><td>${esc(x.Mode)}</td><td class="wrap">${esc(x.Remarks)}</td><td class="right">${btns('R', x.ReturnID)}</td></tr>`).join('') ||
+        <td class="right"><b>${inr(x.Amount)}</b></td><td>${esc(x.Mode)}</td><td class="wrap">${esc(x.Remarks)}</td><td class="right">${btns('R', x.ReturnID, x.Amount)}</td></tr>`).join('') ||
         '<tr><td colspan="7">' + emptyBox('Nothing to confirm') + '</td></tr>'}</tbody></table></div></div>
     ${(r.scrap || []).length ? `<div class="card"><div class="card-h">Scrap ka cash — Owner tak pahunchna baaki <span class="muted">${r.scrap.length}</span></div>
       <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Kiske paas</th><th>Entry</th><th class="right">Amount</th><th>Kaise</th><th></th></tr></thead>
@@ -920,6 +957,10 @@ async function viewApprovals(el) {
     if (type === 'V') { const g = await askGivenBy(); if (!g) return; p.givenBy = g; }
     const r2 = await act(b, CONFIRM_ACTION[type], p, 'Confirmed');
     if (r2) { refreshView(); refreshBadge(); }
+  });
+  $$('[data-part]', el).forEach(b => b.onclick = () => {
+    const [type, id, full] = b.dataset.part.split('|');
+    partialConfirm(type, id, Number(full), b);
   });
   $$('[data-rej]', el).forEach(b => b.onclick = async () => {
     const [type, id] = b.dataset.rej.split('|');
@@ -1060,7 +1101,9 @@ function renderVoucher(box, r, id) {
   const canDelExp = (isOpen || autoClosed) && (own || isAdmin());
 
   const actions = [];
-  if (isOwner() && isPending) actions.push('<button class="btn btn-danger" data-a="reject">Reject</button>', '<button class="btn btn-ok" data-a="confirm">Confirm cash given</button>');
+  if (isOwner() && isPending) actions.push('<button class="btn btn-danger" data-a="reject">Reject</button>',
+    '<button class="btn btn-ghost" data-a="partial">Partial confirm</button>',
+    '<button class="btn btn-ok" data-a="confirm">Confirm cash given</button>');
   if (isOwner() && isOpen) actions.push('<button class="btn btn-ghost" data-a="close">Settle &amp; Close</button>');
   if ((own || isAdmin()) && isPending) actions.push('<button class="btn btn-danger" data-a="cancel">Cancel entry</button>');
   if (own && isOpen) actions.push('<button class="btn btn-ghost" data-a="return">Return Cash</button>', '<button class="btn btn-primary btn-auto" data-a="expense">+ Add Expense</button>');
@@ -1079,6 +1122,7 @@ function renderVoucher(box, r, id) {
     ${isPending ? '<div class="note">Waiting for Owner to confirm this cash was given.</div>' : ''}
     ${v.Status === 'Rejected' ? `<div class="note bad">Rejected by ${esc(v.ConfirmedBy)}: ${esc(v.RejectReason)}</div>` : ''}
     ${v.GivenBy ? `<div class="note">Cash given by <b>${esc(v.GivenBy)}</b></div>` : ''}
+    ${v.RequestedAmount ? `<div class="note">Partly approved: requested <b>${inr(v.RequestedAmount)}</b> → given <b>${inr(v.Amount)}</b>${v.PartialNote ? ' — ' + esc(v.PartialNote) : ''}</div>` : ''}
     ${num(v.Balance) < 0 ? `<div class="note bad">Spent ${inr(-num(v.Balance))} more than received — payable by Owner.</div>` : ''}
     ${v.Status === 'Closed' ? `<div class="note">Closed by ${esc(v.ClosedBy)} on ${esc(v.ClosedAt)}${v.CloseNote ? ' — ' + esc(v.CloseNote) : ''}</div>` : ''}
 
@@ -1094,7 +1138,8 @@ function renderVoucher(box, r, id) {
       <div class="table-card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th class="right">Amount</th><th>Mode</th><th>Remarks</th><th>Status</th>${isOwner() ? '<th></th>' : ''}</tr></thead>
       <tbody>${r.returns.map(x => `<tr><td>${esc(x.Date)}</td><td class="right">${inr(x.Amount)}</td><td>${esc(x.Mode)}</td>
         <td class="wrap">${esc(x.Remarks)}${x.RejectReason ? ' — <span class="neg">' + esc(x.RejectReason) + '</span>' : ''}</td><td>${badge(x.Status)}</td>
-        ${isOwner() ? `<td class="right">${x.Status === 'Pending Confirm' ? `<button class="btn btn-ok btn-sm" data-rok="${esc(x.ReturnID)}">Confirm</button>
+                ${isOwner() ? `<td class="right">${x.Status === 'Pending Confirm' ? `<button class="btn btn-ok btn-sm" data-rok="${esc(x.ReturnID)}">Confirm</button>
+          ${!x.GroupID ? `<button class="btn btn-ghost btn-sm" data-rpart="${esc(x.ReturnID)}|${num(x.Amount)}">Partial</button>` : ''}
           <button class="btn btn-danger btn-sm" data-rrej="${esc(x.ReturnID)}">Reject</button>` : ''}</td>` : ''}</tr>`).join('')}</tbody></table></div></div></div>` : ''}
 
     ${actions.length ? `<div class="m-actions" style="margin-top:20px">${actions.join('')}</div>` : ''}`;
@@ -1105,6 +1150,9 @@ function renderVoucher(box, r, id) {
   if (A('confirm')) A('confirm').onclick = async e => {
     const btn = e.currentTarget, g = await askGivenBy(); if (!g) return;
     const x = await act(btn, 'confirmVoucher', { id, decision: 'confirm', givenBy: g }); if (x) done('Cash entry confirmed', x);
+  };
+  if (A('partial')) A('partial').onclick = async e => {
+    const x = await partialConfirm('V', id, num(v.Amount), e.currentTarget); if (x) done('', x);
   };
   if (A('reject')) A('reject').onclick = async e => {
     const btn = e.currentTarget;
@@ -1136,6 +1184,10 @@ function renderVoucher(box, r, id) {
   });
   $$('[data-rok]', box).forEach(b => b.onclick = async () => {
     { const x = await act(b, 'confirmReturn', { id: b.dataset.rok, decision: 'confirm' }); if (x) done('Return confirmed', x); }
+  });
+  $$('[data-rpart]', box).forEach(b => b.onclick = async () => {
+    const [rid, full] = b.dataset.rpart.split('|');
+    const x = await partialConfirm('R', rid, Number(full), b); if (x) done('', x);
   });
   $$('[data-rrej]', box).forEach(b => b.onclick = async () => {
     const reason = await askText('Reject cash return', 'Reason', true, 'Reject');
